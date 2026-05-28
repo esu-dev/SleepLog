@@ -54,7 +54,7 @@ jobs:
             - name: Create Payload and IPA
               run: |
                   # 1. きれいな作業場を作る
-                  rm -rf Payload HouseholdBudget.ipa export_app
+                  rm -rf Payload SleepLog.ipa export_app
                   mkdir -p export_app/Payload
 
                   # 2. .appファイルを一旦別の場所にコピー（シンボリックリンクを維持する -a オプション）
@@ -64,7 +64,7 @@ jobs:
                   # 3. フォルダの中に移動してからzipする（これが重要！）
                   # フォルダの外側からzipすると、余計なパスが含まれて "vector too long" の原因になります
                   cd export_app
-                  zip -qr ../HouseholdBudget.ipa Payload
+                  zip -qr ../SleepLog.ipa Payload
                   cd ..
 
                   echo "IPA creation complete."
@@ -73,4 +73,4 @@ jobs:
               uses: actions/upload-artifact@v4
               with:
                   name: ios-ipa
-                  path: HouseholdBudget.ipa
+                  path: SleepLog.ipa
