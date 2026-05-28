@@ -1,0 +1,76 @@
+name: Build iOS IPA (Unsigned)
+on:
+    workflow_dispatch:
+        # 手動実行用ボタンを出す設定
+
+jobs:
+    build:
+        runs-on: macos-latest # 最新のビルド環境を使用
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: 20
+                  cache: "npm"
+
+            # --- ここを追加 ---
+            - name: Set Xcode version
+              run: sudo xcode-select -s /Applications/Xcode.app
+
+            - name: Install dependencies
+              run:
+                  # 署名なしビルドを邪魔する開発用パッケージを、ビルド時のみ一時的に削除します
+                  npm uninstall expo-dev-client expo-dev-launcher npm install
+
+            - name: Install Expo CLI & Prebuild
+              run: |
+                  # 開発用クライアントを含めないように、--no-install を付けて
+                  # 純粋なプロダクション（配布用）に近い状態で prebuild します
+                  # --clean: iosディレクトリを削除してから再作成
+                  npx expo prebuild --platform ios --no-install --clean
+
+                  # その後、必要な Pods だけをインストール
+                  cd ios && pod install && cd ..
+
+            - name: Build with Xcode (Unsigned)
+              run: |
+                  xcodebuild -workspace ios/*.xcworkspace \
+                    -scheme SleepLog \
+                    -configuration Release \
+                    -derivedDataPath build \
+                    -jobs 2 \
+                    CODE_SIGNING_ALLOWED=NO \
+                    CODE_SIGNING_REQUIRED=NO \
+                    CODE_SIGNING_ENTITLEMENTS="" \
+                    PROVISIONING_PROFILE_SPECIFIER="" \
+                    AD_HOC_CODE_SIGNING_ALLOWED=YES \
+                    ASSETCATALOG_COMPILER_SKIP_APP_ICON_CHECK=YES \
+                    COMPILER_INDEX_STORE_ENABLE=NO \
+                    IPHONEOS_DEPLOYMENT_TARGET=15.1 | xcbeautify || { echo "Build Failed"; exit 1; }
+
+            - name: Create Payload and IPA
+              run: |
+                  # 1. きれいな作業場を作る
+                  rm -rf Payload HouseholdBudget.ipa export_app
+                  mkdir -p export_app/Payload
+
+                  # 2. .appファイルを一旦別の場所にコピー（シンボリックリンクを維持する -a オプション）
+                  APP_PATH=$(find build/Build/Products/Release-iphoneos -name "*.app" | head -n 1)
+                  cp -Ra "$APP_PATH" export_app/Payload/
+
+                  # 3. フォルダの中に移動してからzipする（これが重要！）
+                  # フォルダの外側からzipすると、余計なパスが含まれて "vector too long" の原因になります
+                  cd export_app
+                  zip -qr ../HouseholdBudget.ipa Payload
+                  cd ..
+
+                  echo "IPA creation complete."
+
+            - name: Upload IPA Artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: ios-ipa
+                  path: HouseholdBudget.ipa
