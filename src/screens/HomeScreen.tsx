@@ -11,7 +11,6 @@ import {
   Platform,
   Keyboard,
   Alert,
-  Switch,
   ScrollView,
   Modal,
   Animated,
@@ -22,6 +21,51 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { Moon, AlarmClock, Edit, Sunrise } from 'lucide-react-native';
 import { useSleepStore } from '../store/useSleepStore';
 import { insertSleepLog } from '../db/client';
+
+interface CustomSwitchProps {
+  value: boolean;
+  onValueChange: (value: boolean) => void | Promise<void>;
+}
+
+const CustomSwitch: React.FC<CustomSwitchProps> = ({ value, onValueChange }) => {
+  const switchAnim = React.useRef(new Animated.Value(value ? 1 : 0)).current;
+
+  React.useEffect(() => {
+    Animated.timing(switchAnim, {
+      toValue: value ? 1 : 0,
+      duration: 200,
+      useNativeDriver: false,
+    }).start();
+  }, [value]);
+
+  const translateX = switchAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [2, 22],
+  });
+
+  const backgroundColor = switchAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['#334155', '#6366f1'],
+  });
+
+  return (
+    <Pressable onPress={() => onValueChange(!value)} style={{ padding: 4 }}>
+      <Animated.View
+        style={[
+          styles.switchContainer,
+          { backgroundColor }
+        ]}
+      >
+        <Animated.View
+          style={[
+            styles.switchKnob,
+            { transform: [{ translateX }] }
+          ]}
+        />
+      </Animated.View>
+    </Pressable>
+  );
+};
 
 export default function HomeScreen() {
   const {
@@ -500,12 +544,9 @@ export default function HomeScreen() {
                     <AlarmClock size={20} color="#f8fafc" style={styles.alarmIcon} />
                     <Text style={styles.alarmTitle}>起床アラーム</Text>
                   </View>
-                  <Switch
+                  <CustomSwitch
                     value={alarmEnabled}
                     onValueChange={handleToggleAlarm}
-                    trackColor={{ false: '#334155', true: '#6366f1' }}
-                    thumbColor={alarmEnabled ? '#ffffff' : '#94a3b8'}
-                    ios_backgroundColor="#334155"
                   />
                 </View>
 
@@ -792,6 +833,26 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0f172a', // Slate 900
+  },
+  switchContainer: {
+    width: 48,
+    height: 28,
+    borderRadius: 14,
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  switchKnob: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#ffffff',
+    position: 'absolute',
+    top: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 2,
   },
   scrollContent: {
     flexGrow: 1,
