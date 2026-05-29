@@ -28,42 +28,33 @@ interface CustomSwitchProps {
 }
 
 const CustomSwitch: React.FC<CustomSwitchProps> = ({ value, onValueChange }) => {
-  const switchAnim = React.useRef(new Animated.Value(value ? 1 : 0)).current;
-
-  React.useEffect(() => {
-    Animated.timing(switchAnim, {
-      toValue: value ? 1 : 0,
-      duration: 200,
-      useNativeDriver: false,
-    }).start();
-  }, [value]);
-
-  const translateX = switchAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [2, 22],
-  });
-
-  const backgroundColor = switchAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['#334155', '#6366f1'],
-  });
-
   return (
-    <Pressable onPress={() => onValueChange(!value)} style={{ padding: 4 }}>
-      <Animated.View
+    <View style={styles.segmentContainer}>
+      <TouchableOpacity
         style={[
-          styles.switchContainer,
-          { backgroundColor }
+          styles.segmentButton,
+          value ? styles.segmentButtonActiveOn : styles.segmentButtonInactive
         ]}
+        onPress={() => {
+          if (!value) onValueChange(true);
+        }}
+        activeOpacity={0.7}
       >
-        <Animated.View
-          style={[
-            styles.switchKnob,
-            { transform: [{ translateX }] }
-          ]}
-        />
-      </Animated.View>
-    </Pressable>
+        <Text style={[styles.segmentText, value && styles.segmentTextActive]}>ON</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[
+          styles.segmentButton,
+          !value ? styles.segmentButtonActiveOff : styles.segmentButtonInactive
+        ]}
+        onPress={() => {
+          if (value) onValueChange(false);
+        }}
+        activeOpacity={0.7}
+      >
+        <Text style={[styles.segmentText, !value && styles.segmentTextActive]}>OFF</Text>
+      </TouchableOpacity>
+    </View>
   );
 };
 
@@ -834,25 +825,38 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0f172a', // Slate 900
   },
-  switchContainer: {
-    width: 48,
-    height: 28,
-    borderRadius: 14,
-    justifyContent: 'center',
-    position: 'relative',
+  segmentContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#0f172a', // Slate 900
+    borderRadius: 8,
+    padding: 2,
+    borderWidth: 1,
+    borderColor: '#334155', // Slate 700
   },
-  switchKnob: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#ffffff',
-    position: 'absolute',
-    top: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 2,
-    elevation: 2,
+  segmentButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 46,
+  },
+  segmentButtonActiveOn: {
+    backgroundColor: '#6366f1', // Indigo 500
+  },
+  segmentButtonActiveOff: {
+    backgroundColor: '#475569', // Slate 600
+  },
+  segmentButtonInactive: {
+    backgroundColor: 'transparent',
+  },
+  segmentText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#64748b', // Slate 500
+  },
+  segmentTextActive: {
+    color: '#ffffff',
   },
   scrollContent: {
     flexGrow: 1,
