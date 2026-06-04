@@ -88,6 +88,18 @@ export default function HomeScreen() {
   const [showCustomSnooze, setShowCustomSnooze] = useState(false);
   const snoozePulseAnim = React.useRef(new Animated.Value(1)).current;
 
+  // === DEBUG LOG STATE ===
+  const [debugLogs, setDebugLogs] = useState<string[]>([]);
+  const [showDebugPanel, setShowDebugPanel] = useState(false);
+
+  const addLog = (message: string) => {
+    const timestamp = new Date().toISOString().slice(11, 23); // HH:MM:SS.mmm
+    const line = `[${timestamp}] ${message}`;
+    console.log('[AlarmDebug]', line);
+    setDebugLogs(prev => [...prev, line]);
+  };
+  // =======================
+
   // Remaining time dynamic calculation
   useEffect(() => {
     if (!alarmEnabled) {
@@ -331,34 +343,62 @@ export default function HomeScreen() {
   };
 
   const handleToggleAlarm = async (value: boolean) => {
+    addLog(`▶ handleToggleAlarm called: value=${value}`);
+    addLog(`  Platform: ${Platform.OS}`);
+    setShowDebugPanel(true);
+
     if (value) {
-      // Request permissions
-      const { status: existingStatus } = await Notifications.getPermissionsAsync();
-      let finalStatus = existingStatus;
-      if (existingStatus !== 'granted') {
-        const { status } = await Notifications.requestPermissionsAsync();
-        finalStatus = status;
-      }
+      try {
+        addLog('  Step1: getPermissionsAsync()...');
+        const existingPerms = await Notifications.getPermissionsAsync();
+        addLog(`  Step1 result: status=${existingPerms.status}, canAskAgain=${existingPerms.canAskAgain}, granted=${existingPerms.granted}`);
+        addLog(`  Step1 ios.allowsAlert=${(existingPerms as any).ios?.allowsAlert}, ios.allowsSound=${(existingPerms as any).ios?.allowsSound}`);
 
-      if (finalStatus !== 'granted') {
-        Alert.alert(
-          '通知権限エラー',
-          'アラーム機能を利用するには通知の許可が必要です。端末の設定画面からSleepLogの通知を許可してください。'
-        );
-        setAlarmEnabled(false);
-        return;
-      }
+        let finalStatus = existingPerms.status;
 
-      // Permissions granted, schedule alarm
-      const success = await scheduleDailyAlarm(alarmHour, alarmMinute);
-      if (success) {
-        setAlarmEnabled(true);
-      } else {
+        if (existingPerms.status !== 'granted') {
+          addLog('  Step2: requestPermissionsAsync()...');
+          const reqResult = await Notifications.requestPermissionsAsync();
+          finalStatus = reqResult.status;
+          addLog(`  Step2 result: status=${reqResult.status}, canAskAgain=${reqResult.canAskAgain}, granted=${reqResult.granted}`);
+          addLog(`  Step2 ios.allowsAlert=${(reqResult as any).ios?.allowsAlert}, ios.allowsSound=${(reqResult as any).ios?.allowsSound}`);
+        } else {
+          addLog('  Step2: skipped (already granted)');
+        }
+
+        addLog(`  finalStatus=${finalStatus}`);
+
+        if (finalStatus !== 'granted') {
+          addLog('  ❌ Permission NOT granted → setAlarmEnabled(false)');
+          Alert.alert(
+            '通知権限エラー',
+            'アラーム機能を利用するには通知の許可が必要です。端末の設定画面からSleepLogの通知を許可してください。'
+          );
+          setAlarmEnabled(false);
+          return;
+        }
+
+        addLog('  Step3: scheduleDailyAlarm()...');
+        const success = await scheduleDailyAlarm(alarmHour, alarmMinute);
+        addLog(`  Step3 result: success=${success}`);
+
+        if (success) {
+          addLog('  ✅ setAlarmEnabled(true)');
+          setAlarmEnabled(true);
+        } else {
+          addLog('  ❌ scheduleDailyAlarm failed → setAlarmEnabled(false)');
+          setAlarmEnabled(false);
+        }
+      } catch (err: any) {
+        addLog(`  💥 EXCEPTION: ${err?.message ?? String(err)}`);
+        addLog(`  stack: ${err?.stack ?? 'N/A'}`);
         setAlarmEnabled(false);
       }
     } else {
+      addLog('  → cancelDailyAlarm() & setAlarmEnabled(false)');
       await cancelDailyAlarm();
       setAlarmEnabled(false);
+      addLog('  Done.');
     }
   };
 
@@ -540,6 +580,38 @@ export default function HomeScreen() {
                     onValueChange={handleToggleAlarm}
                   />
                 </View>
+
+                {/* === DEBUG LOG PANEL === */}
+                {showDebugPanel && (
+                  <View style={styles.debugPanel}>
+                    <View style={styles.debugPanelHeader}>
+                      <Text style={styles.debugPanelTitle}>🔍 アラームデバッグログ</Text>
+                      <TouchableOpacity
+                        onPress={() => { setDebugLogs([]); setShowDebugPanel(false); }}
+                        style={styles.debugClearButton}
+                      >
+                        <Text style={styles.debugClearButtonText}>クリア</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <ScrollView style={styles.debugLogScroll} nestedScrollEnabled>
+                      {debugLogs.length === 0 ? (
+                        <Text style={styles.debugLogLine}>（ログなし）</Text>
+                      ) : (
+                        debugLogs.map((line, i) => (
+                          <Text key={i} style={styles.debugLogLine}>{line}</Text>
+                        ))
+                      )}
+                    </ScrollView>
+                  </View>
+                )}
+                {!showDebugPanel && (
+                  <TouchableOpacity
+                    style={styles.debugOpenButton}
+                    onPress={() => setShowDebugPanel(true)}
+                  >
+                    <Text style={styles.debugOpenButtonText}>🔍 デバッグログを表示</Text>
+                  </TouchableOpacity>
+                )}
 
                 <View style={styles.alarmBody}>
                   <Pressable
@@ -1322,5 +1394,63 @@ const styles = StyleSheet.create({
   moodButtonTextActive: {
     color: '#f8fafc',
     fontWeight: '800',
+  },
+  // ---- Debug Panel Styles ----
+  debugOpenButton: {
+    marginTop: 10,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: '#1e293b',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  debugOpenButtonText: {
+    color: '#94a3b8',
+    fontSize: 11,
+  },
+  debugPanel: {
+    marginTop: 10,
+    backgroundColor: '#0a0f1e',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#1e3a5f',
+    overflow: 'hidden',
+  },
+  debugPanelHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#0f172a',
+    borderBottomWidth: 1,
+    borderBottomColor: '#1e3a5f',
+  },
+  debugPanelTitle: {
+    color: '#7dd3fc',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  debugClearButton: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    backgroundColor: '#1e293b',
+    borderRadius: 4,
+  },
+  debugClearButtonText: {
+    color: '#94a3b8',
+    fontSize: 10,
+  },
+  debugLogScroll: {
+    maxHeight: 200,
+    padding: 8,
+  },
+  debugLogLine: {
+    color: '#a3e635',
+    fontSize: 10,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    lineHeight: 16,
   },
 });

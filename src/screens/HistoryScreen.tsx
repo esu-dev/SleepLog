@@ -26,7 +26,7 @@ interface HistoryScreenProps {
 }
 
 export default function HistoryScreen({ logs, onRefresh }: HistoryScreenProps) {
-  
+
   // Handle single item deletion
   const handleDelete = (id: number) => {
     Alert.alert(
@@ -93,7 +93,7 @@ export default function HistoryScreen({ logs, onRefresh }: HistoryScreenProps) {
     setEditWakeTime(new Date(log.wake_time));
     setEditMood(log.mood);
     setEditMemo(log.memo || '');
-    
+
     setShowBedDate(false);
     setShowBedTime(false);
     setShowWakeDate(false);
@@ -162,7 +162,7 @@ export default function HistoryScreen({ logs, onRefresh }: HistoryScreenProps) {
           onPress={handleResetDatabase}
         >
           <AlertTriangle size={16} color="#ef4444" style={styles.actionIcon} />
-          <Text style={styles.resetButtonText}>データベース全削除 (開発用リセット)</Text>
+          <Text style={styles.resetButtonText}>データベース全削除</Text>
         </Pressable>
       </View>
     );
