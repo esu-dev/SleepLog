@@ -1,10 +1,72 @@
 name: Build iOS IPA (Unsigned)
 on:
+    push:
+        branches:
+            - main
+        paths:
+            - "package.json"
+            - "app.json"
     workflow_dispatch:
         # 手動実行用ボタンを出す設定
 
 jobs:
+    check_version:
+        runs-on: ubuntu-latest
+        outputs:
+            version_changed: ${{ steps.check.outputs.changed }}
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 2
+
+            - name: Check if version changed
+              id: check
+              run: |
+                  # 手動実行（workflow_dispatch）の場合は常にビルドを実行
+                  if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+                    echo "Workflow triggered manually. Proceeding with build."
+                    echo "changed=true" >> "$GITHUB_OUTPUT"
+                    exit 0
+                  fi
+
+                  BEFORE_SHA="${{ github.event.before }}"
+                  PREV_PKG_VER=""
+                  PREV_APP_VER=""
+
+                  if [ -n "$BEFORE_SHA" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+                    git fetch origin "$BEFORE_SHA" --depth=1 2>/dev/null || true
+                    PREV_PKG_VER=$(git show "$BEFORE_SHA:package.json" 2>/dev/null | jq -r '.version // empty' || echo "")
+                    PREV_APP_VER=$(git show "$BEFORE_SHA:app.json" 2>/dev/null | jq -r '.expo.version // empty' || echo "")
+                  fi
+
+                  if [ -z "$PREV_PKG_VER" ]; then
+                    PREV_PKG_VER=$(git show HEAD~1:package.json 2>/dev/null | jq -r '.version // empty' || echo "")
+                  fi
+                  if [ -z "$PREV_APP_VER" ]; then
+                    PREV_APP_VER=$(git show HEAD~1:app.json 2>/dev/null | jq -r '.expo.version // empty' || echo "")
+                  fi
+
+                  CURR_PKG_VER=$(jq -r '.version // empty' package.json 2>/dev/null || echo "")
+                  CURR_APP_VER=$(jq -r '.expo.version // empty' app.json 2>/dev/null || echo "")
+
+                  echo "Previous package.json version: $PREV_PKG_VER"
+                  echo "Current package.json version:  $CURR_PKG_VER"
+                  echo "Previous app.json version:     $PREV_APP_VER"
+                  echo "Current app.json version:      $CURR_APP_VER"
+
+                  if ([ -n "$CURR_PKG_VER" ] && [ "$PREV_PKG_VER" != "$CURR_PKG_VER" ]) || \
+                     ([ -n "$CURR_APP_VER" ] && [ "$PREV_APP_VER" != "$CURR_APP_VER" ]); then
+                    echo "Version change detected! Proceeding with build."
+                    echo "changed=true" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "No version change detected. Skipping build."
+                    echo "changed=false" >> "$GITHUB_OUTPUT"
+                  fi
+
     build:
+        needs: check_version
+        if: needs.check_version.outputs.version_changed == 'true'
         runs-on: macos-latest # 最新のビルド環境を使用
         steps:
             - name: Checkout repository

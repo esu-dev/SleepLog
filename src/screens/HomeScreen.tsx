@@ -1,62 +1,18 @@
 import React, { useEffect, useState } from 'react';
-import { Smile, Meh, Frown } from 'lucide-react-native';
 import {
   StyleSheet,
   Text,
   View,
-  TouchableOpacity,
   Pressable,
   TextInput,
   KeyboardAvoidingView,
   Platform,
-  Keyboard,
   Alert,
   ScrollView,
-  Modal,
-  Animated,
-  Easing,
 } from 'react-native';
-import * as Notifications from 'expo-notifications';
-import DateTimePicker from '@react-native-community/datetimepicker';
-import { Moon, AlarmClock, Edit, Sunrise } from 'lucide-react-native';
+import { Moon, Sunrise, Smile, Meh, Frown } from 'lucide-react-native';
 import { useSleepStore } from '../store/useSleepStore';
 import { insertSleepLog } from '../db/client';
-
-interface CustomSwitchProps {
-  value: boolean;
-  onValueChange: (value: boolean) => void | Promise<void>;
-}
-
-const CustomSwitch: React.FC<CustomSwitchProps> = ({ value, onValueChange }) => {
-  return (
-    <View style={styles.segmentContainer}>
-      <TouchableOpacity
-        style={[
-          styles.segmentButton,
-          value ? styles.segmentButtonActiveOn : styles.segmentButtonInactive
-        ]}
-        onPress={() => {
-          if (!value) onValueChange(true);
-        }}
-        activeOpacity={0.7}
-      >
-        <Text style={[styles.segmentText, value && styles.segmentTextActive]}>ON</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={[
-          styles.segmentButton,
-          !value ? styles.segmentButtonActiveOff : styles.segmentButtonInactive
-        ]}
-        onPress={() => {
-          if (value) onValueChange(false);
-        }}
-        activeOpacity={0.7}
-      >
-        <Text style={[styles.segmentText, !value && styles.segmentTextActive]}>OFF</Text>
-      </TouchableOpacity>
-    </View>
-  );
-};
 
 export default function HomeScreen() {
   const {
@@ -64,390 +20,10 @@ export default function HomeScreen() {
     startTime,
     startSleep,
     wakeUp,
-    resetTracking,
-    alarmEnabled,
-    alarmHour,
-    alarmMinute,
-    setAlarmEnabled,
-    setAlarmTime,
-    snoozeDuration,
-    setSnoozeDuration,
-    isSnoozing,
-    snoozeTargetTime,
-    stopSnoozing,
-    startSnoozing,
   } = useSleepStore();
   const [elapsedTime, setElapsedTime] = useState('00:00:00');
   const [memo, setMemo] = useState('');
   const [mood, setMood] = useState<number | null>(null);
-  
-  // Alarm pickers & status state
-  const [showPicker, setShowPicker] = useState(false);
-  const [timeRemaining, setTimeRemaining] = useState('');
-  const [snoozeCountdown, setSnoozeCountdown] = useState('');
-  const [showCustomSnooze, setShowCustomSnooze] = useState(false);
-  const snoozePulseAnim = React.useRef(new Animated.Value(1)).current;
-
-  // === DEBUG LOG STATE ===
-  const [debugLogs, setDebugLogs] = useState<string[]>([]);
-  const [showDebugPanel, setShowDebugPanel] = useState(false);
-
-  const addLog = (message: string) => {
-    const timestamp = new Date().toISOString().slice(11, 23); // HH:MM:SS.mmm
-    const line = `[${timestamp}] ${message}`;
-    console.log('[AlarmDebug]', line);
-    setDebugLogs(prev => [...prev, line]);
-  };
-  // =======================
-
-  // Remaining time dynamic calculation
-  useEffect(() => {
-    if (!alarmEnabled) {
-      setTimeRemaining('');
-      return;
-    }
-
-    const updateRemainingTime = () => {
-      const now = new Date();
-      const alarmDate = new Date(now);
-      alarmDate.setHours(alarmHour, alarmMinute, 0, 0);
-
-      if (alarmDate.getTime() <= now.getTime()) {
-        alarmDate.setDate(alarmDate.getDate() + 1);
-      }
-
-      const diffMs = alarmDate.getTime() - now.getTime();
-      const totalMins = Math.ceil(diffMs / 60000); // round up to nearest minute
-      
-      const hrs = Math.floor(totalMins / 60);
-      const mins = totalMins % 60;
-
-      if (hrs > 0) {
-        setTimeRemaining(`あと ${hrs}時間 ${mins}分`);
-      } else {
-        setTimeRemaining(`あと ${mins}分`);
-      }
-    };
-
-    updateRemainingTime();
-
-    // Update every minute (60,000 ms)
-    const intervalId = setInterval(updateRemainingTime, 60000);
-    return () => clearInterval(intervalId);
-  }, [alarmEnabled, alarmHour, alarmMinute]);
-
-  // Pulse animation for active snooze UI
-  useEffect(() => {
-    if (isSnoozing) {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(snoozePulseAnim, {
-            toValue: 1.15,
-            duration: 2000,
-            easing: Easing.out(Easing.ease),
-            useNativeDriver: true,
-          }),
-          Animated.timing(snoozePulseAnim, {
-            toValue: 1.0,
-            duration: 2000,
-            easing: Easing.out(Easing.ease),
-            useNativeDriver: true,
-          }),
-        ])
-      ).start();
-    } else {
-      snoozePulseAnim.setValue(1);
-    }
-  }, [isSnoozing]);
-
-  // Update snooze countdown every second
-  useEffect(() => {
-    let intervalId: ReturnType<typeof setInterval> | undefined;
-
-    if (isSnoozing && snoozeTargetTime) {
-      const updateSnoozeCountdown = () => {
-        const now = new Date().getTime();
-        const target = new Date(snoozeTargetTime).getTime();
-        const diffMs = target - now;
-
-        if (diffMs <= 0) {
-          setSnoozeCountdown('00分00秒');
-          return;
-        }
-
-        const totalSecs = Math.floor(diffMs / 1000);
-        const mins = Math.floor(totalSecs / 60);
-        const secs = totalSecs % 60;
-
-        setSnoozeCountdown(
-          `${mins.toString().padStart(2, '0')}分${secs.toString().padStart(2, '0')}秒`
-        );
-      };
-
-      updateSnoozeCountdown();
-      intervalId = setInterval(updateSnoozeCountdown, 1000);
-    } else {
-      setSnoozeCountdown('');
-    }
-
-    return () => {
-      if (intervalId) clearInterval(intervalId);
-    };
-  }, [isSnoozing, snoozeTargetTime]);
-
-  // Notification scheduling
-  const scheduleDailyAlarm = async (hour: number, minute: number) => {
-    try {
-      // Clean existing notifications first
-      await Notifications.cancelAllScheduledNotificationsAsync();
-
-      // Schedule daily recurring alarm
-      const identifier = await Notifications.scheduleNotificationAsync({
-        content: {
-          title: '起床の時間です！☀️',
-          body: 'よく眠れましたか？今日も一日頑張りましょう！',
-          sound: 'alarm.mp3',
-          priority: Notifications.AndroidNotificationPriority.MAX,
-        },
-        trigger: {
-          type: 'daily',
-          hour,
-          minute,
-        } as any,
-      });
-      console.log('[Alarm] Scheduled alarm ID:', identifier);
-      return true;
-    } catch (error) {
-      console.error('[Alarm] Failed to schedule alarm:', error);
-      Alert.alert('エラー', 'アラームのスケジュール設定に失敗しました。');
-      return false;
-    }
-  };
-
-  const cancelDailyAlarm = async () => {
-    try {
-      await Notifications.cancelAllScheduledNotificationsAsync();
-      console.log('[Alarm] Cancelled all scheduled notifications.');
-    } catch (error) {
-      console.error('[Alarm] Failed to cancel notifications:', error);
-    }
-  };
-
-  const cancelSnoozeNotifications = async () => {
-    try {
-      await Notifications.cancelAllScheduledNotificationsAsync();
-      if (alarmEnabled) {
-        await scheduleDailyAlarm(alarmHour, alarmMinute);
-      }
-    } catch (error) {
-      console.error('[Home] Failed to cancel snooze notifications:', error);
-    }
-  };
-
-  const handleCancelSnooze = async () => {
-    try {
-      await cancelSnoozeNotifications();
-      stopSnoozing();
-      Alert.alert('スヌーズ解除', 'スヌーズをキャンセルしました。');
-    } catch (error) {
-      console.error('[Snooze] Failed to cancel snooze:', error);
-    }
-  };
-
-  const handleTestAlarmInstant = async () => {
-    try {
-      Alert.alert(
-        'テストアラーム送信',
-        '5秒後にテストアラームが発火します。アプリを開いたままでもお知らせバナーとサウンドが動作するか検証できます。端末の音量設定をご確認ください。',
-        [
-          { text: 'キャンセル', style: 'cancel' },
-          {
-            text: '実行',
-            onPress: async () => {
-              const { status } = await Notifications.requestPermissionsAsync();
-              if (status !== 'granted') {
-                Alert.alert('エラー', '通知権限が許可されていません。');
-                return;
-              }
-
-              const identifier = await Notifications.scheduleNotificationAsync({
-                content: {
-                  title: '⏰ 【テスト】起床の時間です！☀️',
-                  body: 'アラームの通知音とバナーの動作検証テストです。よく眠れましたか？',
-                  sound: 'alarm.mp3',
-                  priority: Notifications.AndroidNotificationPriority.MAX,
-                },
-                trigger: {
-                  type: 'timeInterval',
-                  seconds: 5,
-                  repeats: false,
-                } as any,
-              });
-              console.log('[Alarm Test] Scheduled instant test alarm ID:', identifier);
-            }
-          }
-        ]
-      );
-    } catch (error) {
-      console.error('[Alarm Test] Failed to schedule test alarm:', error);
-      Alert.alert('エラー', 'テストアラームの設定に失敗しました。');
-    }
-  };
-
-  const handleInstantSnooze = async () => {
-    try {
-      const { status } = await Notifications.requestPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('エラー', '通知権限が許可されていません。');
-        return;
-      }
-
-      const targetTime = new Date(Date.now() + snoozeDuration * 60 * 1000).toISOString();
-
-      // Schedule the end-of-snooze notification (as before)
-      await Notifications.scheduleNotificationAsync({
-        content: {
-          title: '⏰ スヌーズ終了！',
-          body: `${snoozeDuration}分のスヌーズが終了しました。起きましょう！`,
-          sound: 'alarm.mp3',
-          priority: Notifications.AndroidNotificationPriority.MAX,
-        },
-        trigger: {
-          type: 'timeInterval',
-          seconds: snoozeDuration * 60,
-          repeats: false,
-        } as any,
-      });
-
-      // Immediate recurring alarm while snoozing (fires every minute)
-      await Notifications.scheduleNotificationAsync({
-        content: {
-          title: '⏰ スヌーズ中',
-          body: 'スヌーズ待機中です。起きる準備はできていますか？',
-          sound: 'alarm.mp3',
-          priority: Notifications.AndroidNotificationPriority.MAX,
-        },
-        trigger: {
-          type: 'timeInterval',
-          seconds: 60, // every minute
-          repeats: true,
-        } as any,
-      });
-
-      startSnoozing(targetTime);
-      Alert.alert('スヌーズ開始', `${snoozeDuration}分後にスヌーズ通知が届きます。`);
-    } catch (error) {
-      console.error('[Snooze] Failed to start instant snooze:', error);
-      Alert.alert('エラー', 'スヌーズの設定に失敗しました。');
-    }
-  };
-
-  const handleToggleAlarm = async (value: boolean) => {
-    addLog(`▶ handleToggleAlarm called: value=${value}`);
-    addLog(`  Platform: ${Platform.OS}`);
-    setShowDebugPanel(true);
-
-    if (value) {
-      try {
-        addLog('  Step1: getPermissionsAsync()...');
-        const existingPerms = await Notifications.getPermissionsAsync();
-        addLog(`  Step1 result: status=${existingPerms.status}, canAskAgain=${existingPerms.canAskAgain}, granted=${existingPerms.granted}`);
-        addLog(`  Step1 ios.allowsAlert=${(existingPerms as any).ios?.allowsAlert}, ios.allowsSound=${(existingPerms as any).ios?.allowsSound}`);
-
-        let finalStatus = existingPerms.status;
-
-        if (existingPerms.status !== 'granted') {
-          addLog('  Step2: requestPermissionsAsync()...');
-          const reqResult = await Notifications.requestPermissionsAsync();
-          finalStatus = reqResult.status;
-          addLog(`  Step2 result: status=${reqResult.status}, canAskAgain=${reqResult.canAskAgain}, granted=${reqResult.granted}`);
-          addLog(`  Step2 ios.allowsAlert=${(reqResult as any).ios?.allowsAlert}, ios.allowsSound=${(reqResult as any).ios?.allowsSound}`);
-        } else {
-          addLog('  Step2: skipped (already granted)');
-        }
-
-        addLog(`  finalStatus=${finalStatus}`);
-
-        if (finalStatus !== 'granted') {
-          addLog('  ❌ Permission NOT granted → setAlarmEnabled(false)');
-          Alert.alert(
-            '通知権限エラー',
-            'アラーム機能を利用するには通知の許可が必要です。端末の設定画面からSleepLogの通知を許可してください。'
-          );
-          setAlarmEnabled(false);
-          return;
-        }
-
-        addLog('  Step3: scheduleDailyAlarm()...');
-        const success = await scheduleDailyAlarm(alarmHour, alarmMinute);
-        addLog(`  Step3 result: success=${success}`);
-
-        if (success) {
-          addLog('  ✅ setAlarmEnabled(true)');
-          setAlarmEnabled(true);
-        } else {
-          addLog('  ❌ scheduleDailyAlarm failed → setAlarmEnabled(false)');
-          setAlarmEnabled(false);
-        }
-      } catch (err: any) {
-        addLog(`  💥 EXCEPTION: ${err?.message ?? String(err)}`);
-        addLog(`  stack: ${err?.stack ?? 'N/A'}`);
-        setAlarmEnabled(false);
-      }
-    } else {
-      addLog('  → cancelDailyAlarm() & setAlarmEnabled(false)');
-      await cancelDailyAlarm();
-      setAlarmEnabled(false);
-      addLog('  Done.');
-    }
-  };
-
-  const handleTimeChange = async (event: any, selectedDate?: Date) => {
-    // For Android, close picker immediately
-    if (Platform.OS === 'android') {
-      setShowPicker(false);
-    }
-
-    if (event.type === 'dismissed') {
-      return;
-    }
-
-    if (selectedDate) {
-      const hour = selectedDate.getHours();
-      const minute = selectedDate.getMinutes();
-      setAlarmTime(hour, minute);
-
-      // If alarm is already enabled, reschedule with the new time
-      if (alarmEnabled) {
-        await scheduleDailyAlarm(hour, minute);
-      }
-    }
-  };
-
-  const handleSnoozeTimeChange = (event: any, selectedDate?: Date) => {
-    // For Android, close picker immediately
-    if (Platform.OS === 'android') {
-      setShowCustomSnooze(false);
-    }
-
-    if (event.type === 'dismissed') {
-      return;
-    }
-
-    if (selectedDate) {
-      const hour = selectedDate.getHours();
-      const minute = selectedDate.getMinutes();
-      const duration = hour * 60 + minute;
-
-      if (duration > 0 && duration <= 120) {
-        setSnoozeDuration(duration);
-      } else if (duration > 120) {
-        Alert.alert('エラー', 'スヌーズ時間は最大2時間（120分）まで設定可能です。');
-      } else {
-        Alert.alert('エラー', '1分以上の時間を設定してください。');
-      }
-    }
-  };
 
   // Update real-time timer every second when tracking
   useEffect(() => {
@@ -458,18 +34,18 @@ export default function HomeScreen() {
         const start = new Date(startTime).getTime();
         const now = new Date().getTime();
         const diffMs = Math.max(0, now - start);
-        
+
         const totalSecs = Math.floor(diffMs / 1000);
         const hrs = Math.floor(totalSecs / 3600);
         const mins = Math.floor((totalSecs % 3600) / 60);
         const secs = totalSecs % 60;
-        
+
         const formatted = [
           hrs.toString().padStart(2, '0'),
           mins.toString().padStart(2, '0'),
           secs.toString().padStart(2, '0'),
         ].join(':');
-        
+
         setElapsedTime(formatted);
       };
 
@@ -490,6 +66,7 @@ export default function HomeScreen() {
   // Handle sleep tracking start
   const handleStartSleep = () => {
     setMemo('');
+    setMood(null);
     startSleep();
   };
 
@@ -501,7 +78,7 @@ export default function HomeScreen() {
       const wakeTimeStr = new Date().toISOString();
       const bedtimeMs = new Date(startTime).getTime();
       const wakeTimeMs = new Date(wakeTimeStr).getTime();
-      
+
       const durationSeconds = Math.max(0, Math.floor((wakeTimeMs - bedtimeMs) / 1000));
 
       // Validation check: duration must not exceed 24 hours
@@ -516,21 +93,18 @@ export default function HomeScreen() {
 
       // SQLite Insert
       insertSleepLog(startTime, wakeTimeStr, durationSeconds, memo.trim() || null, mood);
-      
+
       // Zustand State Reset
       wakeUp();
 
-      // Cancel snooze notifications if any
-      cancelSnoozeNotifications();
-      
       // Show Success Alert
       const hours = Math.floor(durationSeconds / 3600);
       const minutes = Math.floor((durationSeconds % 3600) / 60);
-      
+
       Alert.alert(
         'おはようございます！',
         `睡眠データを記録しました。\n睡眠時間: ${hours}時間 ${minutes}分\n今日も一日頑張りましょう！`,
-        [{ text: 'OK', onPress: () => { setMemo(''); setMood(0); } }]
+        [{ text: 'OK', onPress: () => { setMemo(''); setMood(null); } }]
       );
     } catch (error: any) {
       console.error('[Home] Failed to save sleep log:', error);
@@ -549,346 +123,121 @@ export default function HomeScreen() {
         keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
       >
-          {!isTracking ? (
-            /* Standby State */
-            <View style={styles.stateContainer}>
-              <View style={styles.glowingRingPlaceholder}>
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.circleButtonStart,
-                    pressed && { transform: [{ scale: 0.95 }] }
-                  ]}
-                  onPress={handleStartSleep}
-                >
-                  <Moon size={48} color="#f8fafc" style={styles.circleButtonEmoji} />
-                  <Text style={styles.circleButtonTitle}>就寝する</Text>
-                </Pressable>
-              </View>
-              <Text style={styles.promptText}>
-                布団に入る準備はできましたか？{'\n'}上のボタンを押して、心地よい睡眠を記録しましょう。
-              </Text>
-
-              {/* Alarm Config Card */}
-              <View style={styles.alarmCard}>
-                <View style={styles.alarmHeader}>
-                  <View style={styles.alarmTitleRow}>
-                    <AlarmClock size={20} color="#f8fafc" style={styles.alarmIcon} />
-                    <Text style={styles.alarmTitle}>起床アラーム</Text>
-                  </View>
-                  <CustomSwitch
-                    value={alarmEnabled}
-                    onValueChange={handleToggleAlarm}
-                  />
-                </View>
-
-                {/* === DEBUG LOG PANEL === */}
-                {showDebugPanel && (
-                  <View style={styles.debugPanel}>
-                    <View style={styles.debugPanelHeader}>
-                      <Text style={styles.debugPanelTitle}>🔍 アラームデバッグログ</Text>
-                      <TouchableOpacity
-                        onPress={() => { setDebugLogs([]); setShowDebugPanel(false); }}
-                        style={styles.debugClearButton}
-                      >
-                        <Text style={styles.debugClearButtonText}>クリア</Text>
-                      </TouchableOpacity>
-                    </View>
-                    <ScrollView style={styles.debugLogScroll} nestedScrollEnabled>
-                      {debugLogs.length === 0 ? (
-                        <Text style={styles.debugLogLine}>（ログなし）</Text>
-                      ) : (
-                        debugLogs.map((line, i) => (
-                          <Text key={i} style={styles.debugLogLine}>{line}</Text>
-                        ))
-                      )}
-                    </ScrollView>
-                  </View>
-                )}
-                {!showDebugPanel && (
-                  <TouchableOpacity
-                    style={styles.debugOpenButton}
-                    onPress={() => setShowDebugPanel(true)}
-                  >
-                    <Text style={styles.debugOpenButtonText}>🔍 デバッグログを表示</Text>
-                  </TouchableOpacity>
-                )}
-
-                <View style={styles.alarmBody}>
-                  <Pressable
-                    style={({ pressed }) => [
-                      styles.timeDisplayPressable,
-                      pressed && styles.timeDisplayPressablePressed
-                    ]}
-                    onPress={() => setShowPicker(!showPicker)}
-                  >
-                    <Text style={[styles.timeDisplayText, alarmEnabled ? styles.timeDisplayTextActive : styles.timeDisplayTextInactive]}>
-                      {alarmHour.toString().padStart(2, '0')}:{alarmMinute.toString().padStart(2, '0')}
-                    </Text>
-                    <Edit size={14} color="#64748b" style={styles.editIconText} />
-                  </Pressable>
-
-                  {alarmEnabled && timeRemaining ? (
-                    <View style={styles.remainingBadge}>
-                      <Text style={styles.remainingText}>{timeRemaining}</Text>
-                    </View>
-                  ) : (
-                    <Text style={styles.alarmStatusLabel}>
-                      {alarmEnabled ? '設定中' : 'アラーム無効'}
-                    </Text>
-                  )}
-                </View>
-
-                {/* Snooze Duration Selector */}
-                <View style={styles.snoozeSelectorContainer}>
-                  {[{ label: '5分', minutes: 5 }, { label: '10分', minutes: 10 }, { label: '15分', minutes: 15 }].map((item) => (
-                    <TouchableOpacity
-                      key={item.minutes}
-                      style={[styles.snoozeOptionButton, snoozeDuration === item.minutes && styles.snoozeOptionButtonActive]}
-                      onPress={() => setSnoozeDuration(item.minutes)}
-                    >
-                      <Text style={styles.snoozeOptionText}>{item.label}</Text>
-                    </TouchableOpacity>
-                  ))}
-                  <TouchableOpacity
-                    style={[styles.snoozeOptionButton, snoozeDuration > 0 && ![5, 10, 15].includes(snoozeDuration) && styles.snoozeOptionButtonActive]}
-                    onPress={() => setShowCustomSnooze(true)}
-                  >
-                    <Text style={styles.snoozeOptionText}>
-                      {snoozeDuration > 0 && ![5, 10, 15].includes(snoozeDuration)
-                        ? `カスタム (${snoozeDuration}分)`
-                        : 'カスタム'}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-
-                {/* Custom snooze picker display */}
-                {showCustomSnooze && (
-                  Platform.OS === 'ios' ? (
-                    <Modal
-                      transparent={true}
-                      visible={showCustomSnooze}
-                      animationType="slide"
-                      onRequestClose={() => setShowCustomSnooze(false)}
-                    >
-                      <View style={styles.modalOverlay}>
-                        <Pressable style={styles.modalDismissArea} onPress={() => setShowCustomSnooze(false)} />
-                        <View style={styles.modalContent}>
-                          <View style={styles.pickerHeader}>
-                            <Text style={styles.pickerHeaderTitle}>スヌーズ間隔を選択</Text>
-                            <Pressable
-                              style={({ pressed }) => [
-                                styles.pickerCloseButton,
-                                pressed && { opacity: 0.7 }
-                              ]}
-                              onPress={() => setShowCustomSnooze(false)}
-                            >
-                              <Text style={styles.pickerCloseButtonText}>完了</Text>
-                            </Pressable>
-                          </View>
-                          <DateTimePicker
-                            value={(() => {
-                              const d = new Date();
-                              d.setHours(Math.floor(snoozeDuration / 60), snoozeDuration % 60, 0, 0);
-                              return d;
-                            })()}
-                            mode="time"
-                            is24Hour={true}
-                            display="spinner"
-                            onChange={handleSnoozeTimeChange}
-                            textColor="#f8fafc"
-                          />
-                        </View>
-                      </View>
-                    </Modal>
-                  ) : (
-                    <DateTimePicker
-                      value={(() => {
-                        const d = new Date();
-                        d.setHours(Math.floor(snoozeDuration / 60), snoozeDuration % 60, 0, 0);
-                        return d;
-                      })()}
-                      mode="time"
-                      is24Hour={true}
-                      display="default"
-                      onChange={handleSnoozeTimeChange}
-                    />
-                  )
-                )}
-
-                {/* Time Picker Display */}
-                {showPicker && (
-                  Platform.OS === 'ios' ? (
-                    <Modal
-                      transparent={true}
-                      visible={showPicker}
-                      animationType="slide"
-                      onRequestClose={() => setShowPicker(false)}
-                    >
-                      <View style={styles.modalOverlay}>
-                        <Pressable style={styles.modalDismissArea} onPress={() => setShowPicker(false)} />
-                        <View style={styles.modalContent}>
-                          <View style={styles.pickerHeader}>
-                            <Text style={styles.pickerHeaderTitle}>アラーム時刻を選択</Text>
-                            <Pressable
-                              style={({ pressed }) => [
-                                styles.pickerCloseButton,
-                                pressed && { opacity: 0.7 }
-                              ]}
-                              onPress={() => setShowPicker(false)}
-                            >
-                              <Text style={styles.pickerCloseButtonText}>完了</Text>
-                            </Pressable>
-                          </View>
-                          <DateTimePicker
-                            value={(() => {
-                              const d = new Date();
-                              d.setHours(alarmHour, alarmMinute, 0, 0);
-                              return d;
-                            })()}
-                            mode="time"
-                            is24Hour={true}
-                            display="spinner"
-                            onChange={handleTimeChange}
-                            textColor="#f8fafc"
-                          />
-                        </View>
-                      </View>
-                    </Modal>
-                  ) : (
-                    <DateTimePicker
-                      value={(() => {
-                        const d = new Date();
-                        d.setHours(alarmHour, alarmMinute, 0, 0);
-                        return d;
-                      })()}
-                      mode="time"
-                      is24Hour={true}
-                      display="default"
-                      onChange={handleTimeChange}
-                    />
-                  )
-                )}
-
-                {/* Development UI Buttons */}
-                {__DEV__ && (
-                  <>
-                    <TouchableOpacity style={styles.devTestButton} onPress={handleTestAlarmInstant}>
-                      <Text style={styles.devTestButtonText}>🛠️ 開発用: 即時アラームテスト (5秒後)</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.devTestButton} onPress={handleInstantSnooze}>
-                      <Text style={styles.devTestButtonText}>🛠️ 開発用: 即座スヌーズ起動</Text>
-                    </TouchableOpacity>
-                  </>
-                )}
-
-              </View>
-            </View>
-          ) : (
-            /* Tracking State */
-            <View style={styles.stateContainer}>
-              <View style={styles.activeTimerCard}>
-                <View style={styles.pulseIndicatorRow}>
-                  <View style={styles.pulseDot} />
-                  <Text style={styles.trackingLabel}>睡眠計測中...</Text>
-                </View>
-
-                {/* Live Timer Display */}
-                <Text style={styles.timerText}>{elapsedTime}</Text>
-                
-                <Text style={styles.startTimeSubText}>
-                  就寝開始: {new Date(startTime || '').toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
-                </Text>
-
-                {/* Alarm Status Indicator */}
-                {alarmEnabled ? (
-                  <View style={styles.trackingAlarmBadge}>
-                    <Text style={styles.trackingAlarmText}>
-                      ⏰ アラーム設定: {alarmHour.toString().padStart(2, '0')}:{alarmMinute.toString().padStart(2, '0')} (有効)
-                    </Text>
-                  </View>
-                ) : (
-                  <View style={[styles.trackingAlarmBadge, styles.trackingAlarmBadgeDisabled]}>
-                    <Text style={styles.trackingAlarmTextDisabled}>⏰ アラーム設定: 無効</Text>
-                  </View>
-                )}
-              </View>
-
-              {/* Memo input card */}
-              <View style={styles.memoCard}>
-                <Text style={styles.memoTitle}>起床時のメモ (任意)</Text>
-                <TextInput
-                  style={styles.memoInput}
-                  placeholder="目覚めの気分や、夢の内容を記録..."
-                  placeholderTextColor="#64748b"
-                  value={memo}
-                  onChangeText={setMemo}
-                  maxLength={100}
-                  multiline
-                  blurOnSubmit
-                  returnKeyType="done"
-                />
-                <Text style={styles.charCount}>
-                  {memo.length} / 100
-                </Text>
-              </View>
-
-              {/* Mood Selection Section */}
-              <View style={styles.formGroup}>
-                <View style={styles.labelContainer}>
-                  <Smile size={18} color="#cbd5e1" style={{ marginRight: 6 }} />
-                  <Text style={styles.label}>目覚めの気分 (任意)</Text>
-                </View>
-                <View style={styles.moodButtonRow}>
-                  <Pressable
-                    onPress={() => setMood(mood === 2 ? null : 2)}
-                    style={({ pressed }) => [
-                      styles.moodButton,
-                      mood === 2 ? styles.moodButtonActiveBad : styles.moodButtonInactive,
-                      pressed && { transform: [{ scale: 0.97 }] }
-                    ]}
-                  >
-                    <Frown size={24} color={mood === 2 ? '#ef4444' : '#64748b'} />
-                    <Text style={[styles.moodButtonText, mood === 2 && styles.moodButtonTextActive]}>悪い</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => setMood(mood === 1 ? null : 1)}
-                    style={({ pressed }) => [
-                      styles.moodButton,
-                      mood === 1 ? styles.moodButtonActiveNormal : styles.moodButtonInactive,
-                      pressed && { transform: [{ scale: 0.97 }] }
-                    ]}
-                  >
-                    <Meh size={24} color={mood === 1 ? '#facc15' : '#64748b'} />
-                    <Text style={[styles.moodButtonText, mood === 1 && styles.moodButtonTextActive]}>普通</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => setMood(mood === 0 ? null : 0)}
-                    style={({ pressed }) => [
-                      styles.moodButton,
-                      mood === 0 ? styles.moodButtonActiveGood : styles.moodButtonInactive,
-                      pressed && { transform: [{ scale: 0.97 }] }
-                    ]}
-                  >
-                    <Smile size={24} color={mood === 0 ? '#a3e635' : '#64748b'} />
-                    <Text style={[styles.moodButtonText, mood === 0 && styles.moodButtonTextActive]}>良い</Text>
-                  </Pressable>
-                </View>
-              </View>
-
-              {/* Wake Up Button */}
+        {!isTracking ? (
+          /* Standby State */
+          <View style={styles.stateContainer}>
+            <View style={styles.glowingRingPlaceholder}>
               <Pressable
                 style={({ pressed }) => [
-                  styles.buttonWakeUp,
+                  styles.circleButtonStart,
                   pressed && { transform: [{ scale: 0.95 }] }
                 ]}
-                onPress={handleWakeUp}
+                onPress={handleStartSleep}
               >
-                <Text style={styles.buttonWakeUpText}><Sunrise size={24} color="#ffffff" /> 起床する (wakeUp)</Text>
+                <Moon size={48} color="#f8fafc" style={styles.circleButtonEmoji} />
+                <Text style={styles.circleButtonTitle}>就寝する</Text>
               </Pressable>
             </View>
-          )}
-        </ScrollView>
-      </KeyboardAvoidingView>
+            <Text style={styles.promptText}>
+              布団に入る準備はできましたか？{'\n'}上のボタンを押して、心地よい睡眠を記録しましょう。
+            </Text>
+          </View>
+        ) : (
+          /* Tracking State */
+          <View style={styles.stateContainer}>
+            <View style={styles.activeTimerCard}>
+              <View style={styles.pulseIndicatorRow}>
+                <View style={styles.pulseDot} />
+                <Text style={styles.trackingLabel}>睡眠計測中...</Text>
+              </View>
+
+              {/* Live Timer Display */}
+              <Text style={styles.timerText}>{elapsedTime}</Text>
+
+              <Text style={styles.startTimeSubText}>
+                就寝開始: {new Date(startTime || '').toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
+              </Text>
+            </View>
+
+            {/* Memo input card */}
+            <View style={styles.memoCard}>
+              <Text style={styles.memoTitle}>起床時のメモ (任意)</Text>
+              <TextInput
+                style={styles.memoInput}
+                placeholder="目覚めの気分や、夢の内容を記録..."
+                placeholderTextColor="#64748b"
+                value={memo}
+                onChangeText={setMemo}
+                maxLength={100}
+                multiline
+                blurOnSubmit
+                returnKeyType="done"
+              />
+              <Text style={styles.charCount}>
+                {memo.length} / 100
+              </Text>
+            </View>
+
+            {/* Mood Selection Section */}
+            <View style={styles.formGroup}>
+              <View style={styles.labelContainer}>
+                <Smile size={18} color="#cbd5e1" style={{ marginRight: 6 }} />
+                <Text style={styles.label}>目覚めの気分 (任意)</Text>
+              </View>
+              <View style={styles.moodButtonRow}>
+                <Pressable
+                  onPress={() => setMood(mood === 2 ? null : 2)}
+                  style={({ pressed }) => [
+                    styles.moodButton,
+                    mood === 2 ? styles.moodButtonActiveBad : styles.moodButtonInactive,
+                    pressed && { transform: [{ scale: 0.97 }] }
+                  ]}
+                >
+                  <Frown size={24} color={mood === 2 ? '#ef4444' : '#64748b'} />
+                  <Text style={[styles.moodButtonText, mood === 2 && styles.moodButtonTextActive]}>悪い</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setMood(mood === 1 ? null : 1)}
+                  style={({ pressed }) => [
+                    styles.moodButton,
+                    mood === 1 ? styles.moodButtonActiveNormal : styles.moodButtonInactive,
+                    pressed && { transform: [{ scale: 0.97 }] }
+                  ]}
+                >
+                  <Meh size={24} color={mood === 1 ? '#facc15' : '#64748b'} />
+                  <Text style={[styles.moodButtonText, mood === 1 && styles.moodButtonTextActive]}>普通</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setMood(mood === 0 ? null : 0)}
+                  style={({ pressed }) => [
+                    styles.moodButton,
+                    mood === 0 ? styles.moodButtonActiveGood : styles.moodButtonInactive,
+                    pressed && { transform: [{ scale: 0.97 }] }
+                  ]}
+                >
+                  <Smile size={24} color={mood === 0 ? '#a3e635' : '#64748b'} />
+                  <Text style={[styles.moodButtonText, mood === 0 && styles.moodButtonTextActive]}>良い</Text>
+                </Pressable>
+              </View>
+            </View>
+
+            {/* Wake Up Button */}
+            <Pressable
+              style={({ pressed }) => [
+                styles.buttonWakeUp,
+                pressed && { transform: [{ scale: 0.95 }] }
+              ]}
+              onPress={handleWakeUp}
+            >
+              <View style={styles.buttonWakeUpContent}>
+                <Sunrise size={24} color="#ffffff" style={{ marginRight: 8 }} />
+                <Text style={styles.buttonWakeUpText}>起床する (wakeUp)</Text>
+              </View>
+            </Pressable>
+          </View>
+        )}
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -896,39 +245,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0f172a', // Slate 900
-  },
-  segmentContainer: {
-    flexDirection: 'row',
-    backgroundColor: '#0f172a', // Slate 900
-    borderRadius: 8,
-    padding: 2,
-    borderWidth: 1,
-    borderColor: '#334155', // Slate 700
-  },
-  segmentButton: {
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-    borderRadius: 6,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minWidth: 46,
-  },
-  segmentButtonActiveOn: {
-    backgroundColor: '#6366f1', // Indigo 500
-  },
-  segmentButtonActiveOff: {
-    backgroundColor: '#475569', // Slate 600
-  },
-  segmentButtonInactive: {
-    backgroundColor: 'transparent',
-  },
-  segmentText: {
-    fontSize: 12,
-    fontWeight: 'bold',
-    color: '#64748b', // Slate 500
-  },
-  segmentTextActive: {
-    color: '#ffffff',
   },
   scrollContent: {
     flexGrow: 1,
@@ -1025,7 +341,7 @@ const styles = StyleSheet.create({
   },
   timerText: {
     fontSize: 54,
-    fontFamily: Platform.OS === 'ios' ? 'Courier New' : 'monospace', // Digital look
+    fontFamily: Platform.OS === 'ios' ? 'Courier New' : 'monospace',
     fontWeight: 'bold',
     color: '#f8fafc',
     letterSpacing: 2,
@@ -1067,275 +383,6 @@ const styles = StyleSheet.create({
     color: '#64748b',
     textAlign: 'right',
     marginTop: 6,
-  },
-  buttonWakeUp: {
-    width: '100%',
-    height: 52,
-    borderRadius: 16,
-    backgroundColor: '#10b981', // Emerald 500
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#10b981',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  buttonWakeUpText: {
-    color: '#ffffff',
-    fontSize: 18,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  alarmCard: {
-    width: '100%',
-    backgroundColor: '#1e293b', // Slate 800
-    borderRadius: 24,
-    padding: 20,
-    marginTop: 28,
-    borderWidth: 1,
-    borderColor: '#334155', // Slate 700
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  alarmHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  alarmTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  alarmIcon: {
-    fontSize: 20,
-    marginRight: 8,
-  },
-  alarmTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#f8fafc',
-  },
-  alarmBody: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 8,
-  },
-  alarmBodyDisabled: {
-    opacity: 0.6,
-  },
-  timeDisplayPressable: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#0f172a', // Slate 900
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  timeDisplayPressablePressed: {
-    backgroundColor: '#1e1b4b', // Indigo 950
-    borderColor: '#4f46e5',
-  },
-  timeDisplayText: {
-    fontSize: 32,
-    fontFamily: Platform.OS === 'ios' ? 'Courier New' : 'monospace',
-    fontWeight: 'bold',
-  },
-  timeDisplayTextActive: {
-    color: '#6366f1', // Indigo 500
-  },
-  timeDisplayTextInactive: {
-    color: '#94a3b8', // Slate 400
-  },
-  editIconText: {
-    fontSize: 14,
-    marginLeft: 8,
-    color: '#64748b',
-  },
-  remainingBadge: {
-    backgroundColor: '#312e81', // Indigo 900
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#4f46e5',
-  },
-  remainingText: {
-    color: '#a5b4fc', // Indigo 300
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  alarmStatusLabel: {
-    color: '#64748b',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.75)',
-    justifyContent: 'flex-end',
-  },
-  modalDismissArea: {
-    flex: 1,
-  },
-  modalContent: {
-    backgroundColor: '#1e293b',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 24,
-    paddingBottom: Platform.OS === 'ios' ? 40 : 24,
-    borderTopWidth: 1,
-    borderColor: '#334155',
-  },
-  pickerHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1e293b',
-    marginBottom: 8,
-  },
-  pickerHeaderTitle: {
-    color: '#94a3b8',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  pickerCloseButton: {
-    backgroundColor: '#6366f1',
-    paddingVertical: 4,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-  },
-  pickerCloseButtonText: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  trackingAlarmBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#312e81',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#4f46e5',
-    marginTop: 12,
-  },
-  trackingAlarmBadgeDisabled: {
-    backgroundColor: '#0f172a',
-    borderColor: '#334155',
-  },
-  trackingAlarmText: {
-    color: '#a5b4fc',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  trackingAlarmTextDisabled: {
-    color: '#64748b',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  devTestButton: {
-    marginTop: 16,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    backgroundColor: '#0f172a',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#374151',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  devTestButtonText: {
-    color: '#38bdf8',
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-
-  // Snooze UI Styles
-  snoozeSelectorContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-evenly',
-    marginTop: 12,
-  },
-  snoozeOptionButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    backgroundColor: '#1e293b',
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  snoozeOptionButtonActive: {
-    backgroundColor: '#4f46e5',
-    borderColor: '#6366f1',
-  },
-  snoozeOptionText: {
-    color: '#f8fafc',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  snoozeActiveContainer: {
-    width: '100%',
-    backgroundColor: '#1e293b',
-    borderRadius: 24,
-    padding: 24,
-    marginTop: 24,
-    borderWidth: 1,
-    borderColor: '#334155',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  snoozeRing: {
-    width: 140,
-    height: 140,
-    borderRadius: 70,
-    backgroundColor: '#6366f1',
-    opacity: 0.15,
-    marginBottom: 20,
-  },
-  snoozeCountdownText: {
-    fontSize: 18,
-    color: '#a5b4fc',
-    marginBottom: 12,
-  },
-  snoozeActionRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    width: '100%',
-  },
-  snoozeActionButton: {
-    flex: 1,
-    backgroundColor: '#4f46e5',
-    marginHorizontal: 6,
-    borderRadius: 12,
-    height: 48,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#4f46e5',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  snoozeActionButtonText: {
-    color: '#ffffff',
-    fontSize: 14,
-    fontWeight: '800',
   },
   formGroup: {
     width: '100%',
@@ -1395,62 +442,28 @@ const styles = StyleSheet.create({
     color: '#f8fafc',
     fontWeight: '800',
   },
-  // ---- Debug Panel Styles ----
-  debugOpenButton: {
-    marginTop: 10,
-    alignSelf: 'flex-start',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    backgroundColor: '#1e293b',
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  debugOpenButtonText: {
-    color: '#94a3b8',
-    fontSize: 11,
-  },
-  debugPanel: {
-    marginTop: 10,
-    backgroundColor: '#0a0f1e',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#1e3a5f',
-    overflow: 'hidden',
-  },
-  debugPanelHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  buttonWakeUp: {
+    width: '100%',
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: '#10b981', // Emerald 500
+    justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: '#0f172a',
-    borderBottomWidth: 1,
-    borderBottomColor: '#1e3a5f',
+    shadowColor: '#10b981',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
   },
-  debugPanelTitle: {
-    color: '#7dd3fc',
-    fontSize: 11,
-    fontWeight: '700',
+  buttonWakeUpContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  debugClearButton: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    backgroundColor: '#1e293b',
-    borderRadius: 4,
-  },
-  debugClearButtonText: {
-    color: '#94a3b8',
-    fontSize: 10,
-  },
-  debugLogScroll: {
-    maxHeight: 200,
-    padding: 8,
-  },
-  debugLogLine: {
-    color: '#a3e635',
-    fontSize: 10,
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    lineHeight: 16,
+  buttonWakeUpText: {
+    color: '#ffffff',
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: 0.5,
   },
 });

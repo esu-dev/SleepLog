@@ -2,7 +2,7 @@
   "expo": {
     "name": "SleepLog",
     "slug": "SleepLog",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -28,17 +28,7 @@
     },
     "plugins": [
       "expo-sqlite",
-      "@react-native-community/datetimepicker",
-      [
-        "expo-notifications",
-        {
-          "icon": "./assets/icon.png",
-          "color": "#6366f1",
-          "sounds": [
-            "./assets/alarm.mp3"
-          ]
-        }
-      ]
+      "@react-native-community/datetimepicker"
     ]
   }
 }
