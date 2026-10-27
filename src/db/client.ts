@@ -8,6 +8,7 @@ export interface SleepLog {
   bedtime: string;
   wake_time: string;
   duration: number;
+  /** 寝起き評価 (1: 良い, 0: 悪い, null: 未設定) */
   mood: number | null;
   memo?: string | null;
 }
@@ -34,6 +35,28 @@ export const initializeDatabase = (): void => {
       console.log('[DB] Migration: added mood column.');
     } catch (_) {
       // Column already exists – safe to ignore
+    }
+
+    // Migration v1: Migrate mood values from 3 options (0: Good, 1: Normal, 2: Bad)
+    // to 2 options (1: Good, 0: Bad). Normal(1) and Good(0) are merged into Good(1).
+    try {
+      const versionResult = db.getFirstSync<{ user_version: number }>('PRAGMA user_version;');
+      const currentVersion = versionResult?.user_version ?? 0;
+      if (currentVersion < 1) {
+        db.execSync(`
+          -- Step 1: Temporarily shift old 'Good' (0) to 99
+          UPDATE sleep_logs SET mood = 99 WHERE mood = 0;
+          -- Step 2: Convert old 'Bad' (2) to new 'Bad' (0)
+          UPDATE sleep_logs SET mood = 0 WHERE mood = 2;
+          -- Step 3: Convert old 'Good' (99) to new 'Good' (1)
+          UPDATE sleep_logs SET mood = 1 WHERE mood = 99;
+          -- Note: Old 'Normal' (1) is already 1, which now represents 'Good'
+          PRAGMA user_version = 1;
+        `);
+        console.log('[DB] Migration v1: converted mood to 2-option system (Good: 1, Bad: 0).');
+      }
+    } catch (migError) {
+      console.warn('[DB] Migration v1 failed:', migError);
     }
 
     console.log('[DB] Database initialized successfully and sleep_logs table is ready.');

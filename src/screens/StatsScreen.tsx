@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, Pressable, ScrollView, SafeAreaView } from 'react-native';
 import { SleepLog } from '../db/client';
 import { formatDurationJapanese } from '../utils/date';
-import { CheckCircle, AlertTriangle, Lightbulb, Smile, Meh, Frown, ChevronLeft, ChevronRight, Moon, Sunrise, Star, TrendingUp, Info } from 'lucide-react-native';
+import { CheckCircle, AlertTriangle, Lightbulb, Smile, Frown, ChevronLeft, ChevronRight, Moon, Sunrise, Star, TrendingUp, Info } from 'lucide-react-native';
 
 interface StatsScreenProps {
   logs: SleepLog[];
@@ -45,7 +45,8 @@ const fmt2 = (n: number) => n.toString().padStart(2, '0');
 
 // ============================================================
 // Sleep Insight: compute recommended bedtime & wake time
-// from all "良い" (mood=0) records using circular mean
+// from all "良い" (mood=1) records using circular mean
+// Also analyses the sleep pattern of days *preceding* a good-rating day
 // ============================================================
 
 const MIN_GOOD_RECORDS = 3; // minimum samples needed
@@ -54,10 +55,27 @@ interface SleepInsight {
   hasSufficientData: boolean;
   goodCount: number;          // number of good-mood records used
   totalCount: number;
-  recBedtime: string | null;  // "23:15"
+  recBedtime: string | null;  // "23:15" — based on the good day itself
   recWakeTime: string | null; // "07:30"
   recDuration: number | null; // avg duration in seconds
-  confidence: 'high' | 'medium' | 'low'; // based on sample size
+  confidence: 'high' | 'medium' | 'low';
+  // --- Previous-day analysis: sleep the night BEFORE a good-rating day ---
+  prevDayCount: number;           // how many "night before good day" records were found
+  prevRecBedtime: string | null;  // recommended bedtime for tonight
+  prevRecWakeTime: string | null; // recommended wake time
+  prevRecDuration: number | null; // avg sleep duration
+  prevConfidence: 'high' | 'medium' | 'low';
+  // --- Bad-rating analysis: mood === 0 ---
+  badCount: number;
+  badRecBedtime: string | null;
+  badRecWakeTime: string | null;
+  badRecDuration: number | null;
+  badConfidence: 'high' | 'medium' | 'low';
+}
+
+/** Returns local "YYYY-MM-DD" string for any Date */
+function toLocalDateStr(d: Date): string {
+  return `${d.getFullYear()}-${fmt2(d.getMonth() + 1)}-${fmt2(d.getDate())}`;
 }
 
 /**
@@ -79,52 +97,135 @@ function circularMeanHour(hours: number[]): number {
   return meanH < 0 ? meanH + 24 : meanH;
 }
 
+/** Convert average decimal hour to "HH:MM" string */
+function hoursToHHMM(avgH: number): string {
+  const totalMins = Math.round(avgH * 60);
+  const hh = Math.floor(totalMins / 60) % 24;
+  const mm = totalMins % 60;
+  return `${fmt2(hh)}:${fmt2(mm)}`;
+}
+
 function computeSleepInsight(logs: SleepLog[]): SleepInsight {
-  const goodLogs = logs.filter((l) => l.mood === 0 && l.bedtime && l.wake_time && l.duration > 0);
+  const validLogs = logs.filter((l) => l.bedtime && l.wake_time && l.duration > 0);
+  const goodLogs = validLogs.filter((l) => l.mood === 1);
+  const badLogs = validLogs.filter((l) => l.mood === 0 || l.mood === 2);
 
-  const totalCount = logs.filter((l) => l.bedtime && l.wake_time).length;
+  const totalCount = validLogs.length;
   const goodCount = goodLogs.length;
+  const badCount = badLogs.length;
 
-  if (goodCount < MIN_GOOD_RECORDS) {
-    return { hasSufficientData: false, goodCount, totalCount, recBedtime: null, recWakeTime: null, recDuration: null, confidence: 'low' };
+  // ---- Part 1: good-day-itself analysis ----
+  let recBedtime: string | null = null;
+  let recWakeTime: string | null = null;
+  let recDuration: number | null = null;
+  let confidence: SleepInsight['confidence'] = 'low';
+
+  if (goodCount >= MIN_GOOD_RECORDS) {
+    const bedHours: number[] = [];
+    const wakeHours: number[] = [];
+    let durationSum = 0;
+    for (const log of goodLogs) {
+      const bed = new Date(log.bedtime);
+      const wake = new Date(log.wake_time);
+      bedHours.push(bed.getHours() + bed.getMinutes() / 60);
+      wakeHours.push(wake.getHours() + wake.getMinutes() / 60);
+      durationSum += log.duration;
+    }
+    recBedtime = hoursToHHMM(circularMeanHour(bedHours));
+    recWakeTime = hoursToHHMM(circularMeanHour(wakeHours));
+    recDuration = Math.round(durationSum / goodCount);
+    confidence = goodCount >= 14 ? 'high' : goodCount >= 7 ? 'medium' : 'low';
   }
 
-  // Collect bedtime hours and wake hours
-  const bedHours: number[] = [];
-  const wakeHours: number[] = [];
-  let durationSum = 0;
+  // ---- Part 2: previous-day analysis ----
+  const logsByDate = new Map<string, SleepLog[]>();
+  for (const log of validLogs) {
+    const bedDate = new Date(log.bedtime);
+    const key = toLocalDateStr(bedDate);
+    if (!logsByDate.has(key)) logsByDate.set(key, []);
+    logsByDate.get(key)!.push(log);
+  }
 
+  const goodRatingDates = new Set<string>();
   for (const log of goodLogs) {
-    const bed = new Date(log.bedtime);
-    const wake = new Date(log.wake_time);
-    bedHours.push(bed.getHours() + bed.getMinutes() / 60);
-    wakeHours.push(wake.getHours() + wake.getMinutes() / 60);
-    durationSum += log.duration;
+    const wakeDate = new Date(log.wake_time);
+    goodRatingDates.add(toLocalDateStr(wakeDate));
   }
 
-  const avgBedH = circularMeanHour(bedHours);
-  const avgWakeH = circularMeanHour(wakeHours);
-  const avgDuration = Math.round(durationSum / goodCount);
+  const prevDayLogs: SleepLog[] = [];
+  for (const log of validLogs) {
+    const wakeLocalDate = toLocalDateStr(new Date(log.wake_time));
+    if (goodRatingDates.has(wakeLocalDate)) {
+      prevDayLogs.push(log);
+    }
+  }
 
-  const bedTotalMins = Math.round(avgBedH * 60);
-  const bedH = Math.floor(bedTotalMins / 60) % 24;
-  const bedM = bedTotalMins % 60;
+  let prevRecBedtime: string | null = null;
+  let prevRecWakeTime: string | null = null;
+  let prevRecDuration: number | null = null;
+  let prevConfidence: SleepInsight['confidence'] = 'low';
+  const prevDayCount = prevDayLogs.length;
 
-  const wakeTotalMins = Math.round(avgWakeH * 60);
-  const wakeH = Math.floor(wakeTotalMins / 60) % 24;
-  const wakeM = wakeTotalMins % 60;
+  if (prevDayCount >= MIN_GOOD_RECORDS) {
+    const bedHours: number[] = [];
+    const wakeHours: number[] = [];
+    let durationSum = 0;
+    for (const log of prevDayLogs) {
+      const bed = new Date(log.bedtime);
+      const wake = new Date(log.wake_time);
+      bedHours.push(bed.getHours() + bed.getMinutes() / 60);
+      wakeHours.push(wake.getHours() + wake.getMinutes() / 60);
+      durationSum += log.duration;
+    }
+    prevRecBedtime = hoursToHHMM(circularMeanHour(bedHours));
+    prevRecWakeTime = hoursToHHMM(circularMeanHour(wakeHours));
+    prevRecDuration = Math.round(durationSum / prevDayCount);
+    prevConfidence = prevDayCount >= 14 ? 'high' : prevDayCount >= 7 ? 'medium' : 'low';
+  }
 
-  const confidence: SleepInsight['confidence'] =
-    goodCount >= 14 ? 'high' : goodCount >= 7 ? 'medium' : 'low';
+  // ---- Part 3: bad-day-itself analysis (mood === 0) ----
+  let badRecBedtime: string | null = null;
+  let badRecWakeTime: string | null = null;
+  let badRecDuration: number | null = null;
+  let badConfidence: SleepInsight['confidence'] = 'low';
+
+  if (badCount >= MIN_GOOD_RECORDS) {
+    const bedHours: number[] = [];
+    const wakeHours: number[] = [];
+    let durationSum = 0;
+    for (const log of badLogs) {
+      const bed = new Date(log.bedtime);
+      const wake = new Date(log.wake_time);
+      bedHours.push(bed.getHours() + bed.getMinutes() / 60);
+      wakeHours.push(wake.getHours() + wake.getMinutes() / 60);
+      durationSum += log.duration;
+    }
+    badRecBedtime = hoursToHHMM(circularMeanHour(bedHours));
+    badRecWakeTime = hoursToHHMM(circularMeanHour(wakeHours));
+    badRecDuration = Math.round(durationSum / badCount);
+    badConfidence = badCount >= 14 ? 'high' : badCount >= 7 ? 'medium' : 'low';
+  }
+
+  const hasSufficientData = goodCount >= MIN_GOOD_RECORDS || prevDayCount >= MIN_GOOD_RECORDS || badCount >= MIN_GOOD_RECORDS;
 
   return {
-    hasSufficientData: true,
+    hasSufficientData,
     goodCount,
     totalCount,
-    recBedtime: `${fmt2(bedH)}:${fmt2(bedM)}`,
-    recWakeTime: `${fmt2(wakeH)}:${fmt2(wakeM)}`,
-    recDuration: avgDuration,
+    recBedtime,
+    recWakeTime,
+    recDuration,
     confidence,
+    prevDayCount,
+    prevRecBedtime,
+    prevRecWakeTime,
+    prevRecDuration,
+    prevConfidence,
+    badCount,
+    badRecBedtime,
+    badRecWakeTime,
+    badRecDuration,
+    badConfidence,
   };
 }
 
@@ -208,11 +309,31 @@ export default function StatsScreen({ logs }: StatsScreenProps) {
     }
   });
 
-  // Stats summary
+  // Stats summary (週次)
   const recordedDays = dailyStats.filter((d) => d.seconds > 0);
   const totalSeconds = recordedDays.reduce((acc, curr) => acc + curr.seconds, 0);
   const averageSeconds = recordedDays.length > 0 ? Math.floor(totalSeconds / recordedDays.length) : 0;
   const maxHours = Math.max(8, ...dailyStats.map((d) => d.hours));
+
+  // Stats summary (全データ)
+  const allLogsWithDuration = logs.filter((l) => l.duration > 0);
+  const allTotalSeconds = allLogsWithDuration.reduce((acc, l) => acc + l.duration, 0);
+  const allAverageSeconds = allLogsWithDuration.length > 0 ? Math.floor(allTotalSeconds / allLogsWithDuration.length) : 0;
+
+  // 全データの就寝・起床平均時刻（円形統計）
+  const allLogsWithTimes = logs.filter((l) => l.bedtime && l.wake_time);
+  let avgBedtimeLabel: string | null = null;
+  let avgWakeTimeLabel: string | null = null;
+  if (allLogsWithTimes.length > 0) {
+    const bedHoursAll = allLogsWithTimes.map((l) => { const d = new Date(l.bedtime); return d.getHours() + d.getMinutes() / 60; });
+    const wakeHoursAll = allLogsWithTimes.map((l) => { const d = new Date(l.wake_time); return d.getHours() + d.getMinutes() / 60; });
+    const avgBedH = circularMeanHour(bedHoursAll);
+    const avgWakeH = circularMeanHour(wakeHoursAll);
+    const bedTotalMins = Math.round(avgBedH * 60);
+    avgBedtimeLabel = `${fmt2(Math.floor(bedTotalMins / 60) % 24)}:${fmt2(bedTotalMins % 60)}`;
+    const wakeTotalMins = Math.round(avgWakeH * 60);
+    avgWakeTimeLabel = `${fmt2(Math.floor(wakeTotalMins / 60) % 24)}:${fmt2(wakeTotalMins % 60)}`;
+  }
 
   // Week nav
   const isCurrentWeek = weekOffset === 0;
@@ -239,63 +360,179 @@ export default function StatsScreen({ logs }: StatsScreenProps) {
           <View style={styles.insightHeader}>
             <Star size={16} color="#fbbf24" style={{ marginRight: 6 }} />
             <Text style={styles.insightTitle}>パーソナル睡眠アドバイス</Text>
-            {insight.hasSufficientData && (
-              <View style={[
-                styles.confidenceBadge,
-                insight.confidence === 'high' && styles.confidenceBadgeHigh,
-                insight.confidence === 'medium' && styles.confidenceBadgeMedium,
-                insight.confidence === 'low' && styles.confidenceBadgeLow,
-              ]}>
-                <Text style={styles.confidenceBadgeText}>
-                  {insight.confidence === 'high' ? '高信頼度' : insight.confidence === 'medium' ? '中信頼度' : '低信頼度'}
-                </Text>
-              </View>
-            )}
           </View>
 
           {insight.hasSufficientData ? (
             <>
-              <Text style={styles.insightSubtitle}>
-                「気分: 良い」の{insight.goodCount}件のデータから、あなたに最適な睡眠パターンを推測しました。
-              </Text>
-
-              <View style={styles.insightTimeRow}>
-                {/* Bedtime */}
-                <View style={styles.insightTimeCard}>
-                  <View style={styles.insightTimeIconRow}>
-                    <Moon size={18} color="#818cf8" />
-                    <Text style={styles.insightTimeTypeLabel}>推奨就寝時刻</Text>
+              {/* ---- Section A: Tonight's recommendation (previous-day analysis) ---- */}
+              {insight.prevDayCount >= MIN_GOOD_RECORDS && (
+                <>
+                  <View style={styles.insightSectionHeaderRow}>
+                    <Moon size={13} color="#38bdf8" />
+                    <Text style={styles.insightSectionTitle}>今夜の推奨睡眠</Text>
+                    <View style={[
+                      styles.confidenceBadge,
+                      insight.prevConfidence === 'high' && styles.confidenceBadgeHigh,
+                      insight.prevConfidence === 'medium' && styles.confidenceBadgeMedium,
+                      insight.prevConfidence === 'low' && styles.confidenceBadgeLow,
+                    ]}>
+                      <Text style={styles.confidenceBadgeText}>
+                        {insight.prevConfidence === 'high' ? '高信頼度' : insight.prevConfidence === 'medium' ? '中信頼度' : '低信頼度'}
+                      </Text>
+                    </View>
                   </View>
-                  <Text style={styles.insightTimeValue}>{insight.recBedtime}</Text>
-                </View>
-
-                <View style={styles.insightArrow}>
-                  <Text style={styles.insightArrowText}>→</Text>
-                </View>
-
-                {/* Wake time */}
-                <View style={styles.insightTimeCard}>
-                  <View style={styles.insightTimeIconRow}>
-                    <Sunrise size={18} color="#fb923c" />
-                    <Text style={styles.insightTimeTypeLabel}>推奨起床時刻</Text>
-                  </View>
-                  <Text style={styles.insightTimeValue}>{insight.recWakeTime}</Text>
-                </View>
-              </View>
-
-              {insight.recDuration !== null && (
-                <View style={styles.insightDurationRow}>
-                  <TrendingUp size={13} color="#34d399" style={{ marginRight: 4 }} />
-                  <Text style={styles.insightDurationText}>
-                    このパターンの平均睡眠時間: {formatDurationJapanese(insight.recDuration)}
+                  <Text style={styles.insightSubtitle}>
+                    翌日に「良い」評価が出た{insight.prevDayCount}件の前夜の睡眠パターンから算出しました。
                   </Text>
-                </View>
+
+                  <View style={[styles.insightTimeRow, styles.insightTimeRowHighlight]}>
+                    <View style={[styles.insightTimeCard, styles.insightTimeCardHighlight]}>
+                      <View style={styles.insightTimeIconRow}>
+                        <Moon size={18} color="#38bdf8" />
+                        <Text style={[styles.insightTimeTypeLabel, { color: '#7dd3fc' }]}>今夜の就寝目標</Text>
+                      </View>
+                      <Text style={[styles.insightTimeValue, { color: '#38bdf8' }]}>{insight.prevRecBedtime}</Text>
+                    </View>
+
+                    <View style={styles.insightArrow}>
+                      <Text style={styles.insightArrowText}>→</Text>
+                    </View>
+
+                    <View style={[styles.insightTimeCard, styles.insightTimeCardHighlight]}>
+                      <View style={styles.insightTimeIconRow}>
+                        <Sunrise size={18} color="#fb923c" />
+                        <Text style={[styles.insightTimeTypeLabel, { color: '#fdba74' }]}>明朝の起床目標</Text>
+                      </View>
+                      <Text style={[styles.insightTimeValue, { color: '#fb923c' }]}>{insight.prevRecWakeTime}</Text>
+                    </View>
+                  </View>
+
+                  {insight.prevRecDuration !== null && (
+                    <View style={styles.insightDurationRow}>
+                      <TrendingUp size={13} color="#38bdf8" style={{ marginRight: 4 }} />
+                      <Text style={[styles.insightDurationText, { color: '#7dd3fc' }]}>
+                        推奨睡眠時間: {formatDurationJapanese(insight.prevRecDuration)}
+                      </Text>
+                    </View>
+                  )}
+
+                  <View style={styles.insightDivider} />
+                </>
+              )}
+
+              {/* ---- Section B: good-day pattern (existing) ---- */}
+              {insight.goodCount >= MIN_GOOD_RECORDS && (
+                <>
+                  <View style={styles.insightSectionHeaderRow}>
+                    <Smile size={13} color="#a3e635" />
+                    <Text style={styles.insightSectionTitle}>「良い」日の睡眠パターン</Text>
+                    <View style={[
+                      styles.confidenceBadge,
+                      insight.confidence === 'high' && styles.confidenceBadgeHigh,
+                      insight.confidence === 'medium' && styles.confidenceBadgeMedium,
+                      insight.confidence === 'low' && styles.confidenceBadgeLow,
+                    ]}>
+                      <Text style={styles.confidenceBadgeText}>
+                        {insight.confidence === 'high' ? '高信頼度' : insight.confidence === 'medium' ? '中信頼度' : '低信頼度'}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.insightSubtitle}>
+                    「気分: 良い」の{insight.goodCount}件の睡眠自体の平均パターンです。
+                  </Text>
+
+                  <View style={styles.insightTimeRow}>
+                    <View style={styles.insightTimeCard}>
+                      <View style={styles.insightTimeIconRow}>
+                        <Moon size={18} color="#818cf8" />
+                        <Text style={styles.insightTimeTypeLabel}>推奨就寝時刻</Text>
+                      </View>
+                      <Text style={styles.insightTimeValue}>{insight.recBedtime}</Text>
+                    </View>
+
+                    <View style={styles.insightArrow}>
+                      <Text style={styles.insightArrowText}>→</Text>
+                    </View>
+
+                    <View style={styles.insightTimeCard}>
+                      <View style={styles.insightTimeIconRow}>
+                        <Sunrise size={18} color="#fb923c" />
+                        <Text style={styles.insightTimeTypeLabel}>推奨起床時刻</Text>
+                      </View>
+                      <Text style={styles.insightTimeValue}>{insight.recWakeTime}</Text>
+                    </View>
+                  </View>
+
+                  {insight.recDuration !== null && (
+                    <View style={styles.insightDurationRow}>
+                      <TrendingUp size={13} color="#34d399" style={{ marginRight: 4 }} />
+                      <Text style={styles.insightDurationText}>
+                        このパターンの平均睡眠時間: {formatDurationJapanese(insight.recDuration)}
+                      </Text>
+                    </View>
+                  )}
+                </>
+              )}
+
+              {/* ---- Section C: bad-day pattern ---- */}
+              {insight.badCount >= MIN_GOOD_RECORDS && (
+                <>
+                  <View style={styles.insightDivider} />
+                  <View style={styles.insightSectionHeaderRow}>
+                    <Frown size={13} color="#f87171" />
+                    <Text style={styles.insightSectionTitle}>「悪い」日の睡眠パターン</Text>
+                    <View style={[
+                      styles.confidenceBadge,
+                      insight.badConfidence === 'high' && styles.confidenceBadgeHigh,
+                      insight.badConfidence === 'medium' && styles.confidenceBadgeMedium,
+                      insight.badConfidence === 'low' && styles.confidenceBadgeLow,
+                    ]}>
+                      <Text style={styles.confidenceBadgeText}>
+                        {insight.badConfidence === 'high' ? '高信頼度' : insight.badConfidence === 'medium' ? '中信頼度' : '低信頼度'}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.insightSubtitle}>
+                    「気分: 悪い」の{insight.badCount}件の睡眠パターンです。このパターンを避けると改善につながる可能性があります。
+                  </Text>
+
+                  <View style={styles.insightTimeRow}>
+                    <View style={[styles.insightTimeCard, styles.insightTimeCardBad]}>
+                      <View style={styles.insightTimeIconRow}>
+                        <Moon size={18} color="#f87171" />
+                        <Text style={[styles.insightTimeTypeLabel, { color: '#fca5a5' }]}>就寝時刻（平均）</Text>
+                      </View>
+                      <Text style={[styles.insightTimeValue, { color: '#f87171' }]}>{insight.badRecBedtime}</Text>
+                    </View>
+
+                    <View style={styles.insightArrow}>
+                      <Text style={styles.insightArrowText}>→</Text>
+                    </View>
+
+                    <View style={[styles.insightTimeCard, styles.insightTimeCardBad]}>
+                      <View style={styles.insightTimeIconRow}>
+                        <Sunrise size={18} color="#fb923c" />
+                        <Text style={[styles.insightTimeTypeLabel, { color: '#fdba74' }]}>起床時刻（平均）</Text>
+                      </View>
+                      <Text style={[styles.insightTimeValue, { color: '#fb923c' }]}>{insight.badRecWakeTime}</Text>
+                    </View>
+                  </View>
+
+                  {insight.badRecDuration !== null && (
+                    <View style={styles.insightDurationRowBad}>
+                      <AlertTriangle size={13} color="#f87171" style={{ marginRight: 4 }} />
+                      <Text style={styles.insightDurationTextBad}>
+                        このパターンの平均睡眠時間: {formatDurationJapanese(insight.badRecDuration)}
+                      </Text>
+                    </View>
+                  )}
+                </>
               )}
 
               <View style={styles.insightFooterRow}>
                 <Info size={11} color="#475569" style={{ marginRight: 4 }} />
                 <Text style={styles.insightFooterText}>
-                  全{insight.totalCount}件中{insight.goodCount}件の「良い」データをもとに円形統計で算出。
+                  全{insight.totalCount}件のデータをもとに円形統計で算出。
                 </Text>
               </View>
             </>
@@ -303,9 +540,9 @@ export default function StatsScreen({ logs }: StatsScreenProps) {
             <View style={styles.insightNoData}>
               <Text style={styles.insightNoDataTitle}>データが不足しています</Text>
               <Text style={styles.insightNoDataText}>
-                「気分: 良い」で記録された睡眠が{MIN_GOOD_RECORDS}件以上あると、
-                あなたに最適な就寝・起床時刻を推測できます。{`\n`}
-                現在: {insight.goodCount} / {MIN_GOOD_RECORDS}件
+                「気分: 良い」または「悪い」で記録された睡眠が{MIN_GOOD_RECORDS}件以上あると、
+                あなたの睡眠パターンを分析できます。{`\n`}
+                良い: {insight.goodCount} 件　悪い: {insight.badCount} 件 / 各{MIN_GOOD_RECORDS}件必要
               </Text>
             </View>
           )}
@@ -340,7 +577,8 @@ export default function StatsScreen({ logs }: StatsScreenProps) {
 
         {/* Highlights Card */}
         <View style={styles.highlightCard}>
-          <Text style={styles.highlightLabel}>平均睡眠時間 (記録のある日のみ)</Text>
+          {/* 週次平均 */}
+          <Text style={styles.highlightLabel}>平均睡眠時間（この週）</Text>
           <Text style={styles.highlightValue}>
             {averageSeconds > 0 ? formatDurationJapanese(averageSeconds) : 'データなし'}
           </Text>
@@ -362,6 +600,36 @@ export default function StatsScreen({ logs }: StatsScreenProps) {
               </View>
             )}
           </View>
+
+          {/* 全データ平均 */}
+          <View style={styles.highlightDivider} />
+          <Text style={styles.highlightLabelSecondary}>平均睡眠時間（全期間）</Text>
+          <Text style={styles.highlightValueSecondary}>
+            {allAverageSeconds > 0 ? formatDurationJapanese(allAverageSeconds) : 'データなし'}
+          </Text>
+          <Text style={styles.highlightSubText}>全記録数: {allLogsWithDuration.length}回</Text>
+
+          {/* 就寝・起床平均時刻 */}
+          {avgBedtimeLabel && avgWakeTimeLabel && (
+            <>
+              <View style={styles.highlightDivider} />
+              <Text style={styles.highlightLabelSecondary}>平均就寝・起床時刻（全期間）</Text>
+              <View style={styles.avgTimeRow}>
+                <View style={styles.avgTimeItem}>
+                  <Moon size={14} color="#818cf8" style={{ marginRight: 4 }} />
+                  <Text style={styles.avgTimeLabel}>就寝</Text>
+                  <Text style={styles.avgTimeValue}>{avgBedtimeLabel}</Text>
+                </View>
+                <Text style={styles.avgTimeSep}>→</Text>
+                <View style={styles.avgTimeItem}>
+                  <Sunrise size={14} color="#fb923c" style={{ marginRight: 4 }} />
+                  <Text style={styles.avgTimeLabel}>起床</Text>
+                  <Text style={styles.avgTimeValue}>{avgWakeTimeLabel}</Text>
+                </View>
+              </View>
+              <Text style={styles.avgTimeNote}>※円形統計により算出（全{allLogsWithTimes.length}件）</Text>
+            </>
+          )}
         </View>
 
         {/* Bar Chart Card */}
@@ -384,16 +652,14 @@ export default function StatsScreen({ logs }: StatsScreenProps) {
                     </Text>
                     {sel.mood !== null && (
                       <View style={styles.tooltipMoodBadge}>
-                        {sel.mood === 0 && <Smile size={14} color="#a3e635" />}
-                        {sel.mood === 1 && <Meh size={14} color="#facc15" />}
-                        {sel.mood === 2 && <Frown size={14} color="#ef4444" />}
+                        {sel.mood === 1 && <Smile size={14} color="#a3e635" />}
+                        {(sel.mood === 0 || sel.mood === 2) && <Frown size={14} color="#ef4444" />}
                         <Text style={[
                           styles.tooltipMoodText,
-                          sel.mood === 0 && { color: '#a3e635' },
-                          sel.mood === 1 && { color: '#facc15' },
-                          sel.mood === 2 && { color: '#ef4444' },
+                          sel.mood === 1 && { color: '#a3e635' },
+                          (sel.mood === 0 || sel.mood === 2) && { color: '#ef4444' },
                         ]}>
-                          {sel.mood === 0 ? '良い' : sel.mood === 1 ? '普通' : '悪い'}
+                          {sel.mood === 1 ? '良い' : '悪い'}
                         </Text>
                       </View>
                     )}
@@ -436,9 +702,8 @@ export default function StatsScreen({ logs }: StatsScreenProps) {
                     onPress={() => setSelectedBarIndex(isSelected ? null : idx)}
                   >
                     <View style={styles.moodIconContainer}>
-                      {stat.mood === 0 && <Smile size={16} color="#a3e635" />}
-                      {stat.mood === 1 && <Meh size={16} color="#facc15" />}
-                      {stat.mood === 2 && <Frown size={16} color="#ef4444" />}
+                      {stat.mood === 1 && <Smile size={16} color="#a3e635" />}
+                      {(stat.mood === 0 || stat.mood === 2) && <Frown size={16} color="#ef4444" />}
                     </View>
                     <View style={styles.barTrack}>
                       <View style={[
@@ -470,9 +735,6 @@ export default function StatsScreen({ logs }: StatsScreenProps) {
           <View style={styles.moodLegendRow}>
             <View style={styles.legendItem}>
               <Smile size={12} color="#a3e635" /><Text style={[styles.legendText, { marginLeft: 4 }]}>良い</Text>
-            </View>
-            <View style={styles.legendItem}>
-              <Meh size={12} color="#facc15" /><Text style={[styles.legendText, { marginLeft: 4 }]}>普通</Text>
             </View>
             <View style={styles.legendItem}>
               <Frown size={12} color="#ef4444" /><Text style={[styles.legendText, { marginLeft: 4 }]}>悪い</Text>
@@ -730,6 +992,59 @@ const styles = StyleSheet.create({
   },
   healthyIndicatorBad: {
     color: '#f59e0b',
+  },
+  highlightDivider: {
+    height: 1,
+    backgroundColor: '#334155',
+    marginVertical: 14,
+  },
+  highlightLabelSecondary: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748b',
+    marginBottom: 4,
+    letterSpacing: 0.5,
+  },
+  highlightValueSecondary: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#7dd3fc',
+    marginBottom: 4,
+  },
+  avgTimeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    gap: 12,
+  },
+  avgTimeItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0f172a',
+    borderRadius: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  avgTimeLabel: {
+    fontSize: 11,
+    color: '#64748b',
+    marginRight: 6,
+  },
+  avgTimeValue: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#f1f5f9',
+  },
+  avgTimeSep: {
+    fontSize: 16,
+    color: '#475569',
+  },
+  avgTimeNote: {
+    fontSize: 10,
+    color: '#475569',
+    marginTop: 6,
   },
   // ---- Chart Card (shared by both charts) ----
   chartCard: {
@@ -1110,6 +1425,30 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   // ---- Insight Card ----
+  insightDivider: {
+    height: 1,
+    backgroundColor: '#1e3a5f',
+    marginVertical: 14,
+  },
+  insightSectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  insightSectionTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#e2e8f0',
+    flex: 1,
+  },
+  insightTimeRowHighlight: {
+    // slight accent to distinguish from the second section
+  },
+  insightTimeCardHighlight: {
+    borderColor: '#1e3a5f',
+    backgroundColor: '#0c1f35',
+  },
   insightCard: {
     backgroundColor: '#1c1a0e',
     borderRadius: 20,
@@ -1219,6 +1558,26 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#34d399',
+  },
+  insightTimeCardBad: {
+    borderColor: '#7f1d1d',
+    backgroundColor: '#1c0a0a',
+  },
+  insightDurationRowBad: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1c0a0a',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: '#7f1d1d',
+    marginBottom: 10,
+  },
+  insightDurationTextBad: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#f87171',
   },
   insightFooterRow: {
     flexDirection: 'row',

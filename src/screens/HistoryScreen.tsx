@@ -17,7 +17,7 @@ import {
 import { FlashList } from '@shopify/flash-list';
 import { deleteSleepLog, deleteAllSleepLogs, updateSleepLog, SleepLog } from '../db/client';
 import { formatLocalDateWithDay, formatLocalTime, formatDurationJapanese } from '../utils/date';
-import { Smile, Meh, Frown, Edit, Trash2, Moon, Sun, Clock, AlertTriangle, Bed } from 'lucide-react-native';
+import { Smile, Frown, Edit, Trash2, Moon, Sun, Clock, AlertTriangle, Bed } from 'lucide-react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
 interface HistoryScreenProps {
@@ -183,13 +183,11 @@ export default function HistoryScreen({ logs, onRefresh }: HistoryScreenProps) {
             {item.mood !== null && item.mood !== undefined && (
               <View style={[
                 styles.moodBadge,
-                item.mood === 0 && styles.moodBadgeGood,
-                item.mood === 1 && styles.moodBadgeNormal,
-                item.mood === 2 && styles.moodBadgeBad
+                item.mood === 1 && styles.moodBadgeGood,
+                (item.mood === 0 || item.mood === 2) && styles.moodBadgeBad
               ]}>
-                {item.mood === 0 && <Smile size={16} color="#a3e635" />}
-                {item.mood === 1 && <Meh size={16} color="#facc15" />}
-                {item.mood === 2 && <Frown size={16} color="#ef4444" />}
+                {item.mood === 1 && <Smile size={16} color="#a3e635" />}
+                {(item.mood === 0 || item.mood === 2) && <Frown size={16} color="#ef4444" />}
               </View>
             )}
             <View style={styles.durationPill}>
@@ -398,41 +396,30 @@ export default function HistoryScreen({ logs, onRefresh }: HistoryScreenProps) {
               <View style={styles.modalFormGroup}>
                 <View style={styles.modalLabelContainer}>
                   <Smile size={18} color="#cbd5e1" style={{ marginRight: 6 }} />
-                  <Text style={styles.modalLabel}>目覚めの気分 (任意)</Text>
+                  <Text style={styles.modalLabel}>寝起き評価 (任意)</Text>
                 </View>
                 <View style={styles.modalMoodRow}>
-                  <Pressable
-                    onPress={() => setEditMood(editMood === 0 ? null : 0)}
-                    style={({ pressed }) => [
-                      styles.modalMoodButton,
-                      editMood === 0 ? styles.modalMoodActiveGood : styles.modalMoodInactive,
-                      pressed && { transform: [{ scale: 0.97 }] }
-                    ]}
-                  >
-                    <Smile size={24} color={editMood === 0 ? '#a3e635' : '#64748b'} />
-                    <Text style={[styles.modalMoodButtonText, editMood === 0 && styles.modalMoodTextActive]}>良い</Text>
-                  </Pressable>
                   <Pressable
                     onPress={() => setEditMood(editMood === 1 ? null : 1)}
                     style={({ pressed }) => [
                       styles.modalMoodButton,
-                      editMood === 1 ? styles.modalMoodActiveNormal : styles.modalMoodInactive,
+                      editMood === 1 ? styles.modalMoodActiveGood : styles.modalMoodInactive,
                       pressed && { transform: [{ scale: 0.97 }] }
                     ]}
                   >
-                    <Meh size={24} color={editMood === 1 ? '#facc15' : '#64748b'} />
-                    <Text style={[styles.modalMoodButtonText, editMood === 1 && styles.modalMoodTextActive]}>普通</Text>
+                    <Smile size={24} color={editMood === 1 ? '#a3e635' : '#64748b'} />
+                    <Text style={[styles.modalMoodButtonText, editMood === 1 && styles.modalMoodTextActive]}>良い</Text>
                   </Pressable>
                   <Pressable
-                    onPress={() => setEditMood(editMood === 2 ? null : 2)}
+                    onPress={() => setEditMood(editMood === 0 ? null : 0)}
                     style={({ pressed }) => [
                       styles.modalMoodButton,
-                      editMood === 2 ? styles.modalMoodActiveBad : styles.modalMoodInactive,
+                      editMood === 0 ? styles.modalMoodActiveBad : styles.modalMoodInactive,
                       pressed && { transform: [{ scale: 0.97 }] }
                     ]}
                   >
-                    <Frown size={24} color={editMood === 2 ? '#ef4444' : '#64748b'} />
-                    <Text style={[styles.modalMoodButtonText, editMood === 2 && styles.modalMoodTextActive]}>悪い</Text>
+                    <Frown size={24} color={editMood === 0 ? '#ef4444' : '#64748b'} />
+                    <Text style={[styles.modalMoodButtonText, editMood === 0 && styles.modalMoodTextActive]}>悪い</Text>
                   </Pressable>
                 </View>
               </View>
@@ -729,10 +716,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(163, 230, 53, 0.08)',
     borderColor: 'rgba(163, 230, 53, 0.3)',
   },
-  moodBadgeNormal: {
-    backgroundColor: 'rgba(250, 204, 21, 0.08)',
-    borderColor: 'rgba(250, 204, 21, 0.3)',
-  },
   moodBadgeBad: {
     backgroundColor: 'rgba(239, 68, 68, 0.08)',
     borderColor: 'rgba(239, 68, 68, 0.3)',
@@ -929,10 +912,6 @@ const styles = StyleSheet.create({
   modalMoodActiveGood: {
     backgroundColor: 'rgba(163, 230, 53, 0.08)',
     borderColor: '#a3e635',
-  },
-  modalMoodActiveNormal: {
-    backgroundColor: 'rgba(250, 204, 21, 0.08)',
-    borderColor: '#facc15',
   },
   modalMoodActiveBad: {
     backgroundColor: 'rgba(239, 68, 68, 0.08)',
