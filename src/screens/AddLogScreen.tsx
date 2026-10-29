@@ -15,7 +15,7 @@ import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { sleepSchema, SleepLogInput } from '../schemas/sleepSchema';
-import { Moon, Sun, Smile, Meh, Frown } from 'lucide-react-native';
+import { Moon, Sun, Smile, Frown } from 'lucide-react-native';
 import { insertSleepLog } from '../db/client';
 
 // Initial default form values: Bedtime = 8 hours ago, Wake time = Now
@@ -198,41 +198,30 @@ export default function AddLogScreen() {
             <View style={styles.formGroup}>
               <View style={styles.labelContainer}>
                 <Smile size={18} color="#cbd5e1" style={{ marginRight: 6 }} />
-                <Text style={styles.label}>目覚めの気分 (任意)</Text>
+                <Text style={styles.label}>寝起き評価 (任意)</Text>
               </View>
               <View style={styles.moodButtonRow}>
-                <Pressable
-                  onPress={() => setMood(mood === 2 ? null : 2)}
-                  style={({ pressed }) => [
-                    styles.moodButton,
-                    mood === 2 ? styles.moodButtonActiveBad : styles.moodButtonInactive,
-                    pressed && { transform: [{ scale: 0.97 }] }
-                  ]}
-                >
-                  <Frown size={24} color={mood === 2 ? '#ef4444' : '#64748b'} />
-                  <Text style={[styles.moodButtonText, mood === 2 && styles.moodButtonTextActive]}>悪い</Text>
-                </Pressable>
                 <Pressable
                   onPress={() => setMood(mood === 1 ? null : 1)}
                   style={({ pressed }) => [
                     styles.moodButton,
-                    mood === 1 ? styles.moodButtonActiveNormal : styles.moodButtonInactive,
+                    mood === 1 ? styles.moodButtonActiveGood : styles.moodButtonInactive,
                     pressed && { transform: [{ scale: 0.97 }] }
                   ]}
                 >
-                  <Meh size={24} color={mood === 1 ? '#facc15' : '#64748b'} />
-                  <Text style={[styles.moodButtonText, mood === 1 && styles.moodButtonTextActive]}>普通</Text>
+                  <Smile size={28} color={mood === 1 ? '#a3e635' : '#64748b'} />
+                  <Text style={[styles.moodButtonText, mood === 1 && styles.moodButtonTextActive]}>良い</Text>
                 </Pressable>
                 <Pressable
                   onPress={() => setMood(mood === 0 ? null : 0)}
                   style={({ pressed }) => [
                     styles.moodButton,
-                    mood === 0 ? styles.moodButtonActiveGood : styles.moodButtonInactive,
+                    mood === 0 ? styles.moodButtonActiveBad : styles.moodButtonInactive,
                     pressed && { transform: [{ scale: 0.97 }] }
                   ]}
                 >
-                  <Smile size={24} color={mood === 0 ? '#a3e635' : '#64748b'} />
-                  <Text style={[styles.moodButtonText, mood === 0 && styles.moodButtonTextActive]}>良い</Text>
+                  <Frown size={28} color={mood === 0 ? '#ef4444' : '#64748b'} />
+                  <Text style={[styles.moodButtonText, mood === 0 && styles.moodButtonTextActive]}>悪い</Text>
                 </Pressable>
               </View>
             </View>
@@ -512,6 +501,7 @@ const styles = StyleSheet.create({
     width: '100%',
     marginTop: 4,
     marginBottom: 8,
+    gap: 16,
   },
   moodButton: {
     flex: 1,
@@ -531,10 +521,6 @@ const styles = StyleSheet.create({
   moodButtonActiveGood: {
     backgroundColor: 'rgba(163, 230, 53, 0.08)',
     borderColor: '#a3e635',
-  },
-  moodButtonActiveNormal: {
-    backgroundColor: 'rgba(250, 204, 21, 0.08)',
-    borderColor: '#facc15',
   },
   moodButtonActiveBad: {
     backgroundColor: 'rgba(239, 68, 68, 0.08)',
