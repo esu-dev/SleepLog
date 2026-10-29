@@ -8,6 +8,18 @@ interface StatsScreenProps {
   logs: SleepLog[];
 }
 
+export interface SleepSession {
+  id: number;
+  bedtime: string;
+  wake_time: string;
+  duration: number;
+  mood: number | null;
+  bedtimeLabel: string;
+  wakeLabel: string;
+  bedtimeNorm: number;
+  wakeNorm: number;
+}
+
 interface DailyStat {
   dateLabel: string;        // "5/20"
   dayLabel: string;         // "水"
@@ -15,6 +27,7 @@ interface DailyStat {
   seconds: number;          // 27000
   isoDateString: string;    // "YYYY-MM-DD"
   mood: number | null;
+  sessions: SleepSession[];
   // Timeline fields (representative record = longest duration for the day)
   bedtimeLabel: string | null;     // "23:30"
   wakeLabel: string | null;        // "07:15"
@@ -160,6 +173,7 @@ export default function StatsScreen({ logs }: StatsScreenProps) {
         wakeLabel: null,
         bedtimeNorm: null,
         wakeNorm: null,
+        sessions: [],
       });
     }
     return stats;
@@ -167,9 +181,7 @@ export default function StatsScreen({ logs }: StatsScreenProps) {
 
   const dailyStats = getWeekDays(weekOffset);
 
-  // Map logs → daily stats (keep representative = longest-duration log per day)
-  const representativeLog: Map<string, SleepLog> = new Map();
-
+  // Map logs → daily stats (collect all sleep sessions per day)
   logs.forEach((log) => {
     const logDate = new Date(log.bedtime);
     const logLocalStr = `${logDate.getFullYear()}-${fmt2(logDate.getMonth() + 1)}-${fmt2(logDate.getDate())}`;
@@ -178,33 +190,37 @@ export default function StatsScreen({ logs }: StatsScreenProps) {
     if (matchedDay) {
       matchedDay.seconds += log.duration;
       matchedDay.hours = matchedDay.seconds / 3600;
-      if (matchedDay.mood === null && log.mood !== null && log.mood !== undefined) {
-        matchedDay.mood = log.mood;
-      }
-      // Track representative (longest) record
-      const prev = representativeLog.get(logLocalStr);
-      if (!prev || log.duration > prev.duration) {
-        representativeLog.set(logLocalStr, log);
-      }
-    }
-  });
 
-  // Populate timeline fields from representative log
-  dailyStats.forEach((stat) => {
-    const rep = representativeLog.get(stat.isoDateString);
-    if (rep) {
-      const bedDate = new Date(rep.bedtime);
-      const wakeDate = new Date(rep.wake_time);
-
-      stat.bedtimeLabel = `${fmt2(bedDate.getHours())}:${fmt2(bedDate.getMinutes())}`;
-      stat.wakeLabel = `${fmt2(wakeDate.getHours())}:${fmt2(wakeDate.getMinutes())}`;
-
+      const bedDate = new Date(log.bedtime);
+      const wakeDate = new Date(log.wake_time);
       const bedNorm = normalizeHour(bedDate);
       const wakeNorm = normalizeHour(wakeDate);
 
-      // Only draw if within our display window
-      stat.bedtimeNorm = Math.max(TL_START, Math.min(TL_END, bedNorm));
-      stat.wakeNorm = Math.max(TL_START, Math.min(TL_END, wakeNorm));
+      matchedDay.sessions.push({
+        id: log.id,
+        bedtime: log.bedtime,
+        wake_time: log.wake_time,
+        duration: log.duration,
+        mood: log.mood ?? null,
+        bedtimeLabel: `${fmt2(bedDate.getHours())}:${fmt2(bedDate.getMinutes())}`,
+        wakeLabel: `${fmt2(wakeDate.getHours())}:${fmt2(wakeDate.getMinutes())}`,
+        bedtimeNorm: Math.max(TL_START, Math.min(TL_END, bedNorm)),
+        wakeNorm: Math.max(TL_START, Math.min(TL_END, wakeNorm)),
+      });
+    }
+  });
+
+  // Sort sessions chronologically (earliest bedtime first) and set representative fields
+  dailyStats.forEach((stat) => {
+    stat.sessions.sort((a, b) => new Date(a.bedtime).getTime() - new Date(b.bedtime).getTime());
+
+    if (stat.sessions.length > 0) {
+      const longest = [...stat.sessions].sort((a, b) => b.duration - a.duration)[0];
+      stat.mood = longest.mood;
+      stat.bedtimeLabel = longest.bedtimeLabel;
+      stat.wakeLabel = longest.wakeLabel;
+      stat.bedtimeNorm = longest.bedtimeNorm;
+      stat.wakeNorm = longest.wakeNorm;
     }
   });
 
@@ -212,6 +228,7 @@ export default function StatsScreen({ logs }: StatsScreenProps) {
   const recordedDays = dailyStats.filter((d) => d.seconds > 0);
   const totalSeconds = recordedDays.reduce((acc, curr) => acc + curr.seconds, 0);
   const averageSeconds = recordedDays.length > 0 ? Math.floor(totalSeconds / recordedDays.length) : 0;
+  const totalRecords = dailyStats.reduce((acc, curr) => acc + curr.sessions.length, 0);
   const maxHours = Math.max(8, ...dailyStats.map((d) => d.hours));
 
   // Week nav
@@ -345,7 +362,7 @@ export default function StatsScreen({ logs }: StatsScreenProps) {
             {averageSeconds > 0 ? formatDurationJapanese(averageSeconds) : 'データなし'}
           </Text>
           <View style={styles.highlightSubRow}>
-            <Text style={styles.highlightSubText}>期間内の総記録数: {recordedDays.length}回</Text>
+            <Text style={styles.highlightSubText}>期間内の総記録数: {totalRecords}回</Text>
             {averageSeconds > 0 && (
               <View style={styles.healthyIndicatorContainer}>
                 {averageSeconds >= 6 * 3600 ? (
@@ -373,6 +390,8 @@ export default function StatsScreen({ logs }: StatsScreenProps) {
           <View style={styles.tooltipHeightSpacer}>
             {selectedBarIndex !== null && (() => {
               const sel = dailyStats[selectedBarIndex];
+              const sessionCount = sel.sessions.length;
+
               return (
                 <View style={styles.tooltipContainer}>
                   <Text style={styles.tooltipTitle}>
@@ -380,9 +399,13 @@ export default function StatsScreen({ logs }: StatsScreenProps) {
                   </Text>
                   <View style={styles.tooltipRow}>
                     <Text style={styles.tooltipValue}>
-                      {sel.seconds > 0 ? formatDurationJapanese(sel.seconds) : '睡眠記録なし'}
+                      {sel.seconds > 0
+                        ? sessionCount > 1
+                          ? `合計 ${formatDurationJapanese(sel.seconds)} (${sessionCount}回)`
+                          : formatDurationJapanese(sel.seconds)
+                        : '睡眠記録なし'}
                     </Text>
-                    {sel.mood !== null && (
+                    {sessionCount <= 1 && sel.mood !== null && (
                       <View style={styles.tooltipMoodBadge}>
                         {sel.mood === 0 && <Smile size={14} color="#a3e635" />}
                         {sel.mood === 1 && <Meh size={14} color="#facc15" />}
@@ -398,18 +421,48 @@ export default function StatsScreen({ logs }: StatsScreenProps) {
                       </View>
                     )}
                   </View>
-                  {/* Bedtime / Wake time row */}
-                  {sel.bedtimeLabel && sel.wakeLabel && (
+
+                  {/* Bedtime / Wake time row(s) */}
+                  {sessionCount === 1 && (
                     <View style={styles.tooltipTimeRow}>
                       <View style={styles.tooltipTimeItem}>
                         <Moon size={11} color="#818cf8" />
-                        <Text style={styles.tooltipTimeLabel}>{sel.bedtimeLabel}</Text>
+                        <Text style={styles.tooltipTimeLabel}>{sel.sessions[0].bedtimeLabel}</Text>
                       </View>
                       <Text style={styles.tooltipTimeSep}>→</Text>
                       <View style={styles.tooltipTimeItem}>
                         <Sunrise size={11} color="#fb923c" />
-                        <Text style={styles.tooltipTimeLabel}>{sel.wakeLabel}</Text>
+                        <Text style={styles.tooltipTimeLabel}>{sel.sessions[0].wakeLabel}</Text>
                       </View>
+                    </View>
+                  )}
+
+                  {sessionCount > 1 && (
+                    <View style={styles.tooltipSessionsContainer}>
+                      {sel.sessions.map((sess, idx) => (
+                        <View key={sess.id ?? idx} style={styles.tooltipMultiSessionRow}>
+                          <Text style={styles.tooltipSessionNum}>{idx + 1}回目:</Text>
+                          <View style={styles.tooltipTimeItem}>
+                            <Moon size={10} color="#818cf8" />
+                            <Text style={styles.tooltipTimeLabel}>{sess.bedtimeLabel}</Text>
+                          </View>
+                          <Text style={styles.tooltipTimeSep}>→</Text>
+                          <View style={styles.tooltipTimeItem}>
+                            <Sunrise size={10} color="#fb923c" />
+                            <Text style={styles.tooltipTimeLabel}>{sess.wakeLabel}</Text>
+                          </View>
+                          <Text style={styles.tooltipSessionDuration}>
+                            ({formatDurationJapanese(sess.duration)})
+                          </Text>
+                          {sess.mood !== null && (
+                            <View style={styles.tooltipSessionMood}>
+                              {sess.mood === 0 && <Smile size={12} color="#a3e635" />}
+                              {sess.mood === 1 && <Meh size={12} color="#facc15" />}
+                              {sess.mood === 2 && <Frown size={12} color="#ef4444" />}
+                            </View>
+                          )}
+                        </View>
+                      ))}
                     </View>
                   )}
                 </View>
@@ -494,9 +547,7 @@ export default function StatsScreen({ logs }: StatsScreenProps) {
 
           {/* One row per day */}
           {dailyStats.map((stat, idx) => {
-            const hasSleep = stat.bedtimeNorm !== null && stat.wakeNorm !== null;
-            const leftPct = hasSleep ? ((stat.bedtimeNorm! - TL_START) / TL_SPAN) * 100 : 0;
-            const widthPct = hasSleep ? ((stat.wakeNorm! - stat.bedtimeNorm!) / TL_SPAN) * 100 : 0;
+            const hasSleep = stat.sessions.length > 0;
 
             return (
               <View key={stat.isoDateString} style={styles.tlRow}>
@@ -512,20 +563,27 @@ export default function StatsScreen({ logs }: StatsScreenProps) {
                   <View style={[styles.tlMidnightLine, { left: `${((24 - TL_START) / TL_SPAN) * 100}%` as any }]} />
 
                   {hasSleep ? (
-                    <View
-                      style={[
-                        styles.tlBar,
-                        {
-                          left: `${leftPct}%` as any,
-                          width: `${Math.max(widthPct, 2)}%` as any,
-                        },
-                      ]}
-                    >
-                      {/* Moon dot at start */}
-                      <View style={styles.tlBedDot} />
-                      {/* Wake dot at end */}
-                      <View style={styles.tlWakeDot} />
-                    </View>
+                    stat.sessions.map((sess, sIdx) => {
+                      const leftPct = ((sess.bedtimeNorm - TL_START) / TL_SPAN) * 100;
+                      const widthPct = ((sess.wakeNorm - sess.bedtimeNorm) / TL_SPAN) * 100;
+                      return (
+                        <View
+                          key={sess.id ?? sIdx}
+                          style={[
+                            styles.tlBar,
+                            {
+                              left: `${Math.max(0, Math.min(100, leftPct))}%` as any,
+                              width: `${Math.max(2, Math.min(100 - leftPct, widthPct))}%` as any,
+                            },
+                          ]}
+                        >
+                          {/* Moon dot at start */}
+                          <View style={styles.tlBedDot} />
+                          {/* Wake dot at end */}
+                          <View style={styles.tlWakeDot} />
+                        </View>
+                      );
+                    })
                   ) : (
                     <View style={styles.tlNoData}>
                       <Text style={styles.tlNoDataText}>-</Text>
@@ -536,16 +594,21 @@ export default function StatsScreen({ logs }: StatsScreenProps) {
                 {/* Time labels */}
                 <View style={styles.tlTimeLabelCol}>
                   {hasSleep ? (
-                    <>
-                      <View style={styles.tlTimeLabelRow}>
-                        <Moon size={9} color="#818cf8" />
-                        <Text style={styles.tlBedLabel}>{stat.bedtimeLabel}</Text>
+                    stat.sessions.map((sess, sIdx) => (
+                      <View key={sess.id ?? sIdx} style={[styles.tlSessionLabelGroup, sIdx > 0 && { marginTop: 4 }]}>
+                        {stat.sessions.length > 1 && (
+                          <Text style={styles.tlSessionIndexText}>{sIdx + 1}回目</Text>
+                        )}
+                        <View style={styles.tlTimeLabelRow}>
+                          <Moon size={9} color="#818cf8" />
+                          <Text style={styles.tlBedLabel}>{sess.bedtimeLabel}</Text>
+                        </View>
+                        <View style={styles.tlTimeLabelRow}>
+                          <Sunrise size={9} color="#fb923c" />
+                          <Text style={styles.tlWakeLabel}>{sess.wakeLabel}</Text>
+                        </View>
                       </View>
-                      <View style={styles.tlTimeLabelRow}>
-                        <Sunrise size={9} color="#fb923c" />
-                        <Text style={styles.tlWakeLabel}>{stat.wakeLabel}</Text>
-                      </View>
-                    </>
+                    ))
                   ) : (
                     <Text style={styles.tlNoDataText}>—</Text>
                   )}
@@ -758,7 +821,7 @@ const styles = StyleSheet.create({
   },
   // ---- Tooltip ----
   tooltipHeightSpacer: {
-    height: 72,
+    minHeight: 72,
     justifyContent: 'center',
     marginBottom: 12,
   },
@@ -805,6 +868,35 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     marginLeft: 3,
+  },
+  tooltipSessionsContainer: {
+    marginTop: 6,
+    width: '100%',
+    alignItems: 'center',
+    gap: 4,
+  },
+  tooltipMultiSessionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: 4,
+  },
+  tooltipSessionNum: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#a5b4fc',
+    marginRight: 2,
+  },
+  tooltipSessionDuration: {
+    fontSize: 11,
+    color: '#94a3b8',
+    fontWeight: '600',
+    marginLeft: 2,
+  },
+  tooltipSessionMood: {
+    marginLeft: 2,
+    justifyContent: 'center',
   },
   tooltipTimeRow: {
     flexDirection: 'row',
@@ -1041,6 +1133,15 @@ const styles = StyleSheet.create({
     width: 50,
     marginLeft: 6,
     justifyContent: 'center',
+  },
+  tlSessionLabelGroup: {
+    justifyContent: 'center',
+  },
+  tlSessionIndexText: {
+    fontSize: 8,
+    fontWeight: '700',
+    color: '#818cf8',
+    marginBottom: 1,
   },
   tlTimeLabelRow: {
     flexDirection: 'row',
