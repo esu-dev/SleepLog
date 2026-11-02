@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import {
   StyleSheet,
   Text,
@@ -20,6 +20,7 @@ export default function HomeScreen() {
     startTime,
     startSleep,
     wakeUp,
+    resetTracking,
   } = useSleepStore();
   const [elapsedTime, setElapsedTime] = useState('00:00:00');
   const [memo, setMemo] = useState('');
@@ -70,7 +71,27 @@ export default function HomeScreen() {
     startSleep();
   };
 
-  // Handle sleep tracking end (Wake Up)
+
+  // Handle cancel/abort tracking (no data saved)
+  const handleCancelTracking = () => {
+    Alert.alert(
+      '計測を中断しますか？',
+      '計測データは保存されません。本当に中断しますか？',
+      [
+        { text: 'キャンセル', style: 'cancel' },
+        {
+          text: '中断する',
+          style: 'destructive',
+          onPress: () => {
+            resetTracking();
+            setMemo('');
+            setMood(null);
+          },
+        },
+      ]
+    );
+  };
+    // Handle sleep tracking end (Wake Up)
   const handleWakeUp = () => {
     if (!startTime) return;
 
@@ -222,6 +243,16 @@ export default function HomeScreen() {
                 <Sunrise size={24} color="#ffffff" style={{ marginRight: 8 }} />
                 <Text style={styles.buttonWakeUpText}>起床する (wakeUp)</Text>
               </View>
+            </Pressable>
+            {/* Cancel Tracking Button */}
+            <Pressable
+              style={({ pressed }) => [
+                styles.buttonCancel,
+                pressed && { transform: [{ scale: 0.95 }] }
+              ]}
+              onPress={handleCancelTracking}
+            >
+              <Text style={styles.buttonCancelText}>計測を中断する</Text>
             </Pressable>
           </View>
         )}
@@ -450,5 +481,22 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '800',
     letterSpacing: 0.5,
+  },
+  buttonCancel: {
+    width: '100%',
+    height: 48,
+    borderRadius: 16,
+    backgroundColor: 'transparent',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#475569',
+    marginTop: 12,
+  },
+  buttonCancelText: {
+    color: '#94a3b8',
+    fontSize: 15,
+    fontWeight: '600',
+    letterSpacing: 0.3,
   },
 });
