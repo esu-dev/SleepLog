@@ -19,6 +19,7 @@ import { deleteSleepLog, deleteAllSleepLogs, updateSleepLog, SleepLog } from '..
 import { formatLocalDateWithDay, formatLocalTime, formatDurationJapanese } from '../utils/date';
 import { Smile, Frown, Edit, Trash2, Moon, Sun, Clock, AlertTriangle, Bed } from 'lucide-react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { APP_VERSION } from '../constants/appInfo';
 
 interface HistoryScreenProps {
   logs: SleepLog[];
@@ -164,6 +165,7 @@ export default function HistoryScreen({ logs, onRefresh }: HistoryScreenProps) {
           <AlertTriangle size={16} color="#ef4444" style={styles.actionIcon} />
           <Text style={styles.resetButtonText}>データベース全削除</Text>
         </Pressable>
+        <Text style={styles.versionText}>SleepLog v{APP_VERSION}</Text>
       </View>
     );
   };
@@ -273,6 +275,7 @@ export default function HistoryScreen({ logs, onRefresh }: HistoryScreenProps) {
             <AlertTriangle size={14} color="#f87171" style={styles.actionIcon} />
             <Text style={styles.resetButtonText}>DB初期化 (テスト用)</Text>
           </Pressable>
+          <Text style={styles.versionTextEmpty}>SleepLog v{APP_VERSION}</Text>
         </View>
       ) : (
         /* Shopify High-Performance FlashList */
@@ -1078,5 +1081,19 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: '#6366f1', // Indigo 500
+  },
+  versionText: {
+    marginTop: 16,
+    fontSize: 12,
+    color: '#64748b',
+    fontWeight: '500',
+    letterSpacing: 0.5,
+  },
+  versionTextEmpty: {
+    marginTop: 20,
+    fontSize: 12,
+    color: '#64748b',
+    fontWeight: '500',
+    letterSpacing: 0.5,
   },
 });

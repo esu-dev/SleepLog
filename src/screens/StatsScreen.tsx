@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, Pressable, ScrollView, SafeAreaView } from 'react-native';
 import { SleepLog } from '../db/client';
 import { formatDurationJapanese } from '../utils/date';
-import { CheckCircle, AlertTriangle, Lightbulb, Smile, Frown, ChevronLeft, ChevronRight, Moon, Sunrise, Star, TrendingUp, Info } from 'lucide-react-native';
+import { CheckCircle, AlertTriangle, Lightbulb, Smile, Frown, Meh, ChevronLeft, ChevronRight, Moon, Sunrise, Star, TrendingUp, Info, Clock } from 'lucide-react-native';
 
 interface StatsScreenProps {
   logs: SleepLog[];
@@ -242,8 +242,156 @@ function computeSleepInsight(logs: SleepLog[]): SleepInsight {
   };
 }
 
+// ============================================================
+// Bedtime Analysis: 就寝時間帯別の睡眠時間・傾向を分析
+// ============================================================
+
+export interface BedtimeSlotStat {
+  hour: number;          // 0〜23
+  hourSortKey: number;   // 18〜23: 18〜23, 0〜17: 24〜41 (生活リズム順)
+  label: string;         // "22時台"
+  timeRange: string;     // "22:00〜22:59"
+  count: number;         // 記録回数
+  totalDuration: number; // 秒
+  avgDuration: number;   // 秒
+  minDuration: number;   // 秒
+  maxDuration: number;   // 秒
+  goodMoodCount: number; // mood === 1
+  badMoodCount: number;  // mood === 0
+}
+
+export interface BedtimeAnalysis {
+  hasData: boolean;
+  totalCount: number;
+  slots: BedtimeSlotStat[];
+  longestSlot: BedtimeSlotStat | null;
+  shortestSlot: BedtimeSlotStat | null;
+  maxAvgDuration: number;
+  beforeMidnightAvg: number | null;
+  beforeMidnightCount: number;
+  afterMidnightAvg: number | null;
+  afterMidnightCount: number;
+  diffSeconds: number | null; // beforeMidnightAvg - afterMidnightAvg
+}
+
+function computeBedtimeAnalysis(logs: SleepLog[]): BedtimeAnalysis {
+  const validLogs = logs.filter((l) => l.bedtime && l.wake_time && l.duration > 0);
+  if (validLogs.length === 0) {
+    return {
+      hasData: false,
+      totalCount: 0,
+      slots: [],
+      longestSlot: null,
+      shortestSlot: null,
+      maxAvgDuration: 0,
+      beforeMidnightAvg: null,
+      beforeMidnightCount: 0,
+      afterMidnightAvg: null,
+      afterMidnightCount: 0,
+      diffSeconds: null,
+    };
+  }
+
+  const slotMap = new Map<number, {
+    durations: number[];
+    goodMood: number;
+    badMood: number;
+  }>();
+
+  let beforeTotal = 0;
+  let beforeCount = 0;
+  let afterTotal = 0;
+  let afterCount = 0;
+
+  for (const log of validLogs) {
+    const bedDate = new Date(log.bedtime);
+    const h = bedDate.getHours();
+
+    if (!slotMap.has(h)) {
+      slotMap.set(h, { durations: [], goodMood: 0, badMood: 0 });
+    }
+    const item = slotMap.get(h)!;
+    item.durations.push(log.duration);
+    if (log.mood === 1) item.goodMood++;
+    if (log.mood === 0) item.badMood++;
+
+    // 18:00〜23:59: 深夜前 (日付変更前)
+    if (h >= 18 && h <= 23) {
+      beforeTotal += log.duration;
+      beforeCount++;
+    } else if (h >= 0 && h < 12) {
+      // 00:00〜11:59: 深夜〜早朝
+      afterTotal += log.duration;
+      afterCount++;
+    }
+  }
+
+  const slots: BedtimeSlotStat[] = [];
+  for (const [hour, data] of slotMap.entries()) {
+    const total = data.durations.reduce((acc, curr) => acc + curr, 0);
+    const avg = Math.round(total / data.durations.length);
+    const min = Math.min(...data.durations);
+    const max = Math.max(...data.durations);
+    const sortKey = hour >= 18 ? hour : hour + 24;
+
+    slots.push({
+      hour,
+      hourSortKey: sortKey,
+      label: `${hour}時台`,
+      timeRange: `${fmt2(hour)}:00〜${fmt2(hour)}:59`,
+      count: data.durations.length,
+      totalDuration: total,
+      avgDuration: avg,
+      minDuration: min,
+      maxDuration: max,
+      goodMoodCount: data.goodMood,
+      badMoodCount: data.badMood,
+    });
+  }
+
+  // 夕方〜深夜〜翌朝の順序でソート
+  slots.sort((a, b) => a.hourSortKey - b.hourSortKey);
+
+  let longestSlot: BedtimeSlotStat | null = null;
+  let shortestSlot: BedtimeSlotStat | null = null;
+  let maxAvgDuration = 0;
+
+  for (const slot of slots) {
+    if (!longestSlot || slot.avgDuration > longestSlot.avgDuration) {
+      longestSlot = slot;
+    }
+    if (!shortestSlot || slot.avgDuration < shortestSlot.avgDuration) {
+      shortestSlot = slot;
+    }
+    if (slot.avgDuration > maxAvgDuration) {
+      maxAvgDuration = slot.avgDuration;
+    }
+  }
+
+  const beforeMidnightAvg = beforeCount > 0 ? Math.round(beforeTotal / beforeCount) : null;
+  const afterMidnightAvg = afterCount > 0 ? Math.round(afterTotal / afterCount) : null;
+  const diffSeconds = (beforeMidnightAvg !== null && afterMidnightAvg !== null)
+    ? beforeMidnightAvg - afterMidnightAvg
+    : null;
+
+  return {
+    hasData: true,
+    totalCount: validLogs.length,
+    slots,
+    longestSlot,
+    shortestSlot,
+    maxAvgDuration,
+    beforeMidnightAvg,
+    beforeMidnightCount: beforeCount,
+    afterMidnightAvg,
+    afterMidnightCount: afterCount,
+    diffSeconds,
+  };
+}
+
 export default function StatsScreen({ logs }: StatsScreenProps) {
   const [selectedBarIndex, setSelectedBarIndex] = useState<number | null>(null);
+  const [selectedSlotHour, setSelectedSlotHour] = useState<number | null>(null);
   const [weekOffset, setWeekOffset] = useState(0);
 
   // Generate 7-day window ending at (today + offset*7)
@@ -361,6 +509,7 @@ export default function StatsScreen({ logs }: StatsScreenProps) {
 
   // Sleep Insight (全データから計算、週次に依存しない)
   const insight = computeSleepInsight(logs);
+  const bedtimeAnalysis = computeBedtimeAnalysis(logs);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -898,6 +1047,171 @@ export default function StatsScreen({ logs }: StatsScreenProps) {
               <Text style={[styles.legendText, { marginLeft: 3 }]}>起床</Text>
             </View>
           </View>
+        </View>
+
+        {/* ===== Bedtime Analysis Card ===== */}
+        <View style={styles.chartCard}>
+          <View style={styles.bedtimeHeaderRow}>
+            <Clock size={18} color="#818cf8" style={{ marginRight: 8 }} />
+            <Text style={styles.chartCardTitle}>就寝時間別の睡眠時間</Text>
+          </View>
+          <Text style={styles.chartHelpText}>
+            何時台に寝たかによって、睡眠時間がどのように変化するかを分析します。
+          </Text>
+
+          {bedtimeAnalysis.hasData ? (
+            <>
+              {/* サマリー / インサイト */}
+              <View style={styles.bedtimeSummaryContainer}>
+                {bedtimeAnalysis.longestSlot && (
+                  <View style={styles.bedtimeInsightRow}>
+                    <View style={styles.bedtimeInsightBadge}>
+                      <Star size={11} color="#f59e0b" style={{ marginRight: 3 }} />
+                      <Text style={styles.bedtimeInsightBadgeText}>最長睡眠</Text>
+                    </View>
+                    <Text style={styles.bedtimeInsightText}>
+                      最も長く眠れているのは <Text style={styles.bedtimeInsightHighlight}>{bedtimeAnalysis.longestSlot.label}</Text> の就寝です（平均 {formatDurationJapanese(bedtimeAnalysis.longestSlot.avgDuration)}）。
+                    </Text>
+                  </View>
+                )}
+
+                {bedtimeAnalysis.beforeMidnightAvg !== null && bedtimeAnalysis.afterMidnightAvg !== null && (
+                  <View style={styles.bedtimeCompareCard}>
+                    <Text style={styles.bedtimeCompareTitle}>日付変更前後の睡眠比較</Text>
+                    <View style={styles.bedtimeCompareRow}>
+                      <View style={styles.bedtimeCompareCol}>
+                        <Text style={styles.bedtimeCompareLabel}>24時前 就寝 ({bedtimeAnalysis.beforeMidnightCount}回)</Text>
+                        <Text style={styles.bedtimeCompareValue}>{formatDurationJapanese(bedtimeAnalysis.beforeMidnightAvg)}</Text>
+                      </View>
+                      <View style={styles.bedtimeCompareDivider} />
+                      <View style={styles.bedtimeCompareCol}>
+                        <Text style={styles.bedtimeCompareLabel}>24時以降 就寝 ({bedtimeAnalysis.afterMidnightCount}回)</Text>
+                        <Text style={styles.bedtimeCompareValue}>{formatDurationJapanese(bedtimeAnalysis.afterMidnightAvg)}</Text>
+                      </View>
+                    </View>
+                    {bedtimeAnalysis.diffSeconds !== null && Math.abs(bedtimeAnalysis.diffSeconds) >= 60 && (
+                      <View style={styles.bedtimeDiffNoticeRow}>
+                        <TrendingUp size={12} color={bedtimeAnalysis.diffSeconds > 0 ? '#34d399' : '#38bdf8'} style={{ marginRight: 4 }} />
+                        <Text style={[styles.bedtimeDiffNoticeText, { color: bedtimeAnalysis.diffSeconds > 0 ? '#34d399' : '#38bdf8' }]}>
+                          {bedtimeAnalysis.diffSeconds > 0
+                            ? `24時前に就寝すると平均で ${formatDurationJapanese(bedtimeAnalysis.diffSeconds)} 長く眠れています`
+                            : `24時以降の就寝の方が平均で ${formatDurationJapanese(Math.abs(bedtimeAnalysis.diffSeconds))} 長く眠れています`}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                )}
+              </View>
+
+              {/* スロット一覧（横棒バーチャート） */}
+              <View style={styles.bedtimeSlotsContainer}>
+                <Text style={styles.bedtimeSlotsHeader}>時間帯別の平均睡眠時間</Text>
+                <Text style={styles.bedtimeSlotsSubHeader}>※タップすると詳細（最長・最短・寝起き気分）が表示されます。</Text>
+
+                {bedtimeAnalysis.slots.map((slot) => {
+                  const isSelected = selectedSlotHour === slot.hour;
+                  const isLongest = bedtimeAnalysis.longestSlot?.hour === slot.hour;
+                  const pct = Math.max(8, Math.min(100, (slot.avgDuration / bedtimeAnalysis.maxAvgDuration) * 100));
+
+                  return (
+                    <Pressable
+                      key={slot.hour}
+                      style={({ pressed }) => [
+                        styles.bedtimeSlotRow,
+                        isSelected && styles.bedtimeSlotRowSelected,
+                        pressed && { opacity: 0.8 },
+                      ]}
+                      onPress={() => setSelectedSlotHour(isSelected ? null : slot.hour)}
+                    >
+                      {/* メイン行 */}
+                      <View style={styles.bedtimeSlotContent}>
+                        <View style={styles.bedtimeSlotHeaderCol}>
+                          <Text style={[styles.bedtimeSlotLabelText, isSelected && styles.bedtimeSlotLabelTextActive]}>
+                            {slot.label}
+                          </Text>
+                          {isLongest && (
+                            <View style={styles.bedtimeLongestBadge}>
+                              <Text style={styles.bedtimeLongestBadgeText}>最長</Text>
+                            </View>
+                          )}
+                        </View>
+
+                        {/* バー */}
+                        <View style={styles.bedtimeBarWrapper}>
+                          <View
+                            style={[
+                              styles.bedtimeBarBar,
+                              { width: `${pct}%` as any },
+                              isLongest ? styles.bedtimeBarBarLongest : {},
+                              isSelected ? styles.bedtimeBarBarSelected : {},
+                            ]}
+                          />
+                        </View>
+
+                        {/* 時間 & 件数 */}
+                        <View style={styles.bedtimeSlotStatsCol}>
+                          <Text style={[styles.bedtimeSlotAvgText, isSelected && styles.bedtimeSlotAvgTextActive]}>
+                            {formatDurationJapanese(slot.avgDuration)}
+                          </Text>
+                          <Text style={styles.bedtimeSlotCountText}>{slot.count}回</Text>
+                        </View>
+                      </View>
+
+                      {/* アコーディオン詳細展開 */}
+                      {isSelected && (
+                        <View style={styles.bedtimeSlotExpanded}>
+                          <View style={styles.bedtimeDetailGrid}>
+                            <View style={styles.bedtimeDetailGridItem}>
+                              <Text style={styles.bedtimeDetailGridLabel}>対象時間</Text>
+                              <Text style={styles.bedtimeDetailGridVal}>{slot.timeRange}</Text>
+                            </View>
+                            <View style={styles.bedtimeDetailGridItem}>
+                              <Text style={styles.bedtimeDetailGridLabel}>記録件数</Text>
+                              <Text style={styles.bedtimeDetailGridVal}>{slot.count}件</Text>
+                            </View>
+                            <View style={styles.bedtimeDetailGridItem}>
+                              <Text style={styles.bedtimeDetailGridLabel}>最長記録</Text>
+                              <Text style={styles.bedtimeDetailGridVal}>{formatDurationJapanese(slot.maxDuration)}</Text>
+                            </View>
+                            <View style={styles.bedtimeDetailGridItem}>
+                              <Text style={styles.bedtimeDetailGridLabel}>最短記録</Text>
+                              <Text style={styles.bedtimeDetailGridVal}>{formatDurationJapanese(slot.minDuration)}</Text>
+                            </View>
+                          </View>
+
+                          {(slot.goodMoodCount > 0 || slot.badMoodCount > 0) && (
+                            <View style={styles.bedtimeMoodRow}>
+                              <Text style={styles.bedtimeMoodTitle}>寝起き気分:</Text>
+                              {slot.goodMoodCount > 0 && (
+                                <View style={styles.bedtimeMoodTagGood}>
+                                  <Smile size={12} color="#a3e635" />
+                                  <Text style={styles.bedtimeMoodTagGoodText}>良い {slot.goodMoodCount}件</Text>
+                                </View>
+                              )}
+                              {slot.badMoodCount > 0 && (
+                                <View style={styles.bedtimeMoodTagBad}>
+                                  <Frown size={12} color="#ef4444" />
+                                  <Text style={styles.bedtimeMoodTagBadText}>悪い {slot.badMoodCount}件</Text>
+                                </View>
+                              )}
+                            </View>
+                          )}
+                        </View>
+                      )}
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </>
+          ) : (
+            <View style={styles.bedtimeEmptyContainer}>
+              <Moon size={28} color="#475569" style={{ marginBottom: 8 }} />
+              <Text style={styles.bedtimeEmptyTitle}>データがありません</Text>
+              <Text style={styles.bedtimeEmptyText}>
+                睡眠記録が蓄積されると、就寝時刻別の平均睡眠時間や傾向がここに表示されます。
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* Tips Card */}
@@ -1705,5 +2019,280 @@ const styles = StyleSheet.create({
     color: '#92400e',
     textAlign: 'center',
     lineHeight: 19,
+  },
+  // ---- Bedtime Analysis Card Styles ----
+  bedtimeHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  bedtimeSummaryContainer: {
+    marginTop: 14,
+    marginBottom: 8,
+  },
+  bedtimeInsightRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0f172a',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+    marginBottom: 10,
+  },
+  bedtimeInsightBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#78350f',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginRight: 8,
+  },
+  bedtimeInsightBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#fbbf24',
+  },
+  bedtimeInsightText: {
+    fontSize: 12,
+    color: '#cbd5e1',
+    flex: 1,
+    lineHeight: 18,
+  },
+  bedtimeInsightHighlight: {
+    fontWeight: '800',
+    color: '#38bdf8',
+  },
+  bedtimeCompareCard: {
+    backgroundColor: '#0f172a',
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  bedtimeCompareTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#94a3b8',
+    marginBottom: 8,
+  },
+  bedtimeCompareRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  bedtimeCompareCol: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  bedtimeCompareLabel: {
+    fontSize: 11,
+    color: '#64748b',
+    marginBottom: 4,
+  },
+  bedtimeCompareValue: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#f8fafc',
+  },
+  bedtimeCompareDivider: {
+    width: 1,
+    height: 28,
+    backgroundColor: '#334155',
+    marginHorizontal: 8,
+  },
+  bedtimeDiffNoticeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#1e293b',
+    justifyContent: 'center',
+  },
+  bedtimeDiffNoticeText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  bedtimeSlotsContainer: {
+    marginTop: 10,
+  },
+  bedtimeSlotsHeader: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#cbd5e1',
+    marginBottom: 2,
+  },
+  bedtimeSlotsSubHeader: {
+    fontSize: 11,
+    color: '#64748b',
+    marginBottom: 10,
+  },
+  bedtimeSlotRow: {
+    backgroundColor: '#0f172a',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#1e293b',
+  },
+  bedtimeSlotRowSelected: {
+    borderColor: '#6366f1',
+    backgroundColor: '#172554',
+  },
+  bedtimeSlotContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  bedtimeSlotHeaderCol: {
+    width: 58,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  bedtimeSlotLabelText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#94a3b8',
+  },
+  bedtimeSlotLabelTextActive: {
+    color: '#38bdf8',
+  },
+  bedtimeLongestBadge: {
+    backgroundColor: '#fbbf24',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+    marginLeft: 4,
+  },
+  bedtimeLongestBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  bedtimeBarWrapper: {
+    flex: 1,
+    height: 12,
+    backgroundColor: '#1e293b',
+    borderRadius: 6,
+    overflow: 'hidden',
+    marginHorizontal: 10,
+  },
+  bedtimeBarBar: {
+    height: '100%',
+    backgroundColor: '#6366f1',
+    borderRadius: 6,
+  },
+  bedtimeBarBarLongest: {
+    backgroundColor: '#38bdf8',
+  },
+  bedtimeBarBarSelected: {
+    backgroundColor: '#818cf8',
+  },
+  bedtimeSlotStatsCol: {
+    width: 100,
+    alignItems: 'flex-end',
+  },
+  bedtimeSlotAvgText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#f1f5f9',
+  },
+  bedtimeSlotAvgTextActive: {
+    color: '#38bdf8',
+  },
+  bedtimeSlotCountText: {
+    fontSize: 10,
+    color: '#64748b',
+    marginTop: 1,
+  },
+  bedtimeSlotExpanded: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#334155',
+  },
+  bedtimeDetailGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  bedtimeDetailGridItem: {
+    width: '47%',
+    backgroundColor: '#1e293b',
+    borderRadius: 8,
+    padding: 8,
+  },
+  bedtimeDetailGridLabel: {
+    fontSize: 10,
+    color: '#64748b',
+    marginBottom: 2,
+  },
+  bedtimeDetailGridVal: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#f8fafc',
+  },
+  bedtimeMoodRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    paddingTop: 6,
+  },
+  bedtimeMoodTitle: {
+    fontSize: 11,
+    color: '#94a3b8',
+    marginRight: 6,
+  },
+  bedtimeMoodTagGood: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0a1f18',
+    borderColor: '#065f46',
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginRight: 6,
+  },
+  bedtimeMoodTagGoodText: {
+    fontSize: 11,
+    color: '#a3e635',
+    fontWeight: '600',
+    marginLeft: 3,
+  },
+  bedtimeMoodTagBad: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1c0a0a',
+    borderColor: '#7f1d1d',
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  bedtimeMoodTagBadText: {
+    fontSize: 11,
+    color: '#ef4444',
+    fontWeight: '600',
+    marginLeft: 3,
+  },
+  bedtimeEmptyContainer: {
+    alignItems: 'center',
+    paddingVertical: 20,
+  },
+  bedtimeEmptyTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#94a3b8',
+    marginBottom: 4,
+  },
+  bedtimeEmptyText: {
+    fontSize: 12,
+    color: '#64748b',
+    textAlign: 'center',
+    lineHeight: 18,
   },
 });

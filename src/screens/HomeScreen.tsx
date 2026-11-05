@@ -1,4 +1,5 @@
-﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { APP_VERSION } from '../constants/appInfo';
 import {
   StyleSheet,
   Text,
@@ -162,6 +163,7 @@ export default function HomeScreen() {
             <Text style={styles.promptText}>
               布団に入る準備はできましたか？{'\n'}上のボタンを押して、心地よい睡眠を記録しましょう。
             </Text>
+            <Text style={styles.versionText}>SleepLog v{APP_VERSION}</Text>
           </View>
         ) : (
           /* Tracking State */
@@ -498,5 +500,12 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     letterSpacing: 0.3,
+  },
+  versionText: {
+    marginTop: 36,
+    fontSize: 12,
+    color: '#475569',
+    fontWeight: '500',
+    letterSpacing: 0.5,
   },
 });
