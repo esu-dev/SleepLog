@@ -3,6 +3,8 @@ import { StyleSheet, Text, View, TouchableOpacity, Pressable, ScrollView, SafeAr
 import { SleepLog } from '../db/client';
 import { formatDurationJapanese } from '../utils/date';
 import { CheckCircle, AlertTriangle, Lightbulb, Smile, Frown, Meh, ChevronLeft, ChevronRight, Moon, Sunrise, Star, TrendingUp, Info, Clock } from 'lucide-react-native';
+import { analyzeNextSleep } from '../utils/sleepAnalysis';
+import SleepAdviceCard from '../components/SleepAdviceCard';
 
 interface StatsScreenProps {
   logs: SleepLog[];
@@ -510,6 +512,7 @@ export default function StatsScreen({ logs }: StatsScreenProps) {
   // Sleep Insight (全データから計算、週次に依存しない)
   const insight = computeSleepInsight(logs);
   const bedtimeAnalysis = computeBedtimeAnalysis(logs);
+  const todayAdvice = analyzeNextSleep(logs);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -520,6 +523,9 @@ export default function StatsScreen({ logs }: StatsScreenProps) {
           <Text style={styles.title}>睡眠統計</Text>
           <Text style={styles.subtitle}>週ごとの睡眠リズムを分析・可視化します</Text>
         </View>
+
+        {/* ===== 昨日の睡眠データに基づく今日のおすすめ睡眠プラン ===== */}
+        <SleepAdviceCard analysis={todayAdvice} />
 
         {/* ===== Personal Sleep Insight Card ===== */}
         <View style={styles.insightCard}>

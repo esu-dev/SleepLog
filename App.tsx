@@ -56,7 +56,7 @@ export default function App() {
   const renderContent = () => {
     switch (activeTab) {
       case 'home':
-        return <HomeScreen />;
+        return <HomeScreen logs={logs} onRefreshLogs={refreshLogs} />;
 
       case 'add':
         // Disable manual log entry during active tracking

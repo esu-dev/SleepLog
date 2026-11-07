@@ -78,6 +78,12 @@ jobs:
                   node-version: 20
                   cache: "npm"
 
+            - name: Get app version
+              id: get_version
+              run: |
+                  VERSION=$(node -p "require('./app.json').expo.version || require('./package.json').version")
+                  echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
             # --- ここを追加 ---
             - name: Set Xcode version
               run: sudo xcode-select -s /Applications/Xcode.app
@@ -115,8 +121,11 @@ jobs:
 
             - name: Create Payload and IPA
               run: |
+                  VERSION="${{ steps.get_version.outputs.version }}"
+                  IPA_NAME="SleepLog-v${VERSION}.ipa"
+
                   # 1. きれいな作業場を作る
-                  rm -rf Payload SleepLog.ipa export_app
+                  rm -rf Payload export_app *.ipa
                   mkdir -p export_app/Payload
 
                   # 2. .appファイルを一旦別の場所にコピー（シンボリックリンクを維持する -a オプション）
@@ -126,13 +135,13 @@ jobs:
                   # 3. フォルダの中に移動してからzipする（これが重要！）
                   # フォルダの外側からzipすると、余計なパスが含まれて "vector too long" の原因になります
                   cd export_app
-                  zip -qr ../SleepLog.ipa Payload
+                  zip -qr "../$IPA_NAME" Payload
                   cd ..
 
-                  echo "IPA creation complete."
+                  echo "IPA creation complete: $IPA_NAME"
 
             - name: Upload IPA Artifact
               uses: actions/upload-artifact@v4
               with:
-                  name: ios-ipa
-                  path: SleepLog.ipa
+                  name: SleepLog-v${{ steps.get_version.outputs.version }}
+                  path: SleepLog-v${{ steps.get_version.outputs.version }}.ipa
