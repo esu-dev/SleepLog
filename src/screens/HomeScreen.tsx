@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState } from 'react';
 import { APP_VERSION } from '../constants/appInfo';
 import {
   StyleSheet,
@@ -13,16 +13,14 @@ import {
 } from 'react-native';
 import { Moon, Sunrise, Smile, Frown } from 'lucide-react-native';
 import { useSleepStore } from '../store/useSleepStore';
-import { insertSleepLog, getAllSleepLogs, SleepLog } from '../db/client';
-import { analyzeNextSleep } from '../utils/sleepAnalysis';
-import SleepAdviceCard from '../components/SleepAdviceCard';
+import { insertSleepLog, SleepLog } from '../db/client';
 
 interface HomeScreenProps {
   logs?: SleepLog[];
   onRefreshLogs?: () => void;
 }
 
-export default function HomeScreen({ logs: propLogs, onRefreshLogs }: HomeScreenProps) {
+export default function HomeScreen({ logs: _logs, onRefreshLogs }: HomeScreenProps) {
   const {
     isTracking,
     startTime,
@@ -33,24 +31,6 @@ export default function HomeScreen({ logs: propLogs, onRefreshLogs }: HomeScreen
   const [elapsedTime, setElapsedTime] = useState('00:00:00');
   const [memo, setMemo] = useState('');
   const [mood, setMood] = useState<number | null>(null);
-  const [localLogs, setLocalLogs] = useState<SleepLog[]>([]);
-
-  useEffect(() => {
-    if (!propLogs) {
-      try {
-        const fetched = getAllSleepLogs();
-        setLocalLogs(fetched);
-      } catch (e) {
-        console.error('[HomeScreen] Failed to load local logs:', e);
-      }
-    }
-  }, [propLogs]);
-
-  const activeLogs = propLogs ?? localLogs;
-
-  const sleepAnalysis = useMemo(() => {
-    return analyzeNextSleep(activeLogs);
-  }, [activeLogs]);
 
   // Update real-time timer every second when tracking
   useEffect(() => {
@@ -173,9 +153,6 @@ export default function HomeScreen({ logs: propLogs, onRefreshLogs }: HomeScreen
         {!isTracking ? (
           /* Standby State */
           <View style={styles.stateContainer}>
-            {/* 今日のおすすめ睡眠プラン（昨日の睡眠データ分析） */}
-            <SleepAdviceCard analysis={sleepAnalysis} />
-
             <View style={styles.glowingRingPlaceholder}>
               <Pressable
                 style={({ pressed }) => [
