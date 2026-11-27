@@ -44,6 +44,36 @@ function formatHHMM(hh: number, mm: number): string {
 }
 
 /**
+ * 過去の「良い目覚め（mood === 1）」の記録から個人の適正睡眠時間（分）を算出します。
+ * データが3件未満の場合は標準の450分（7時間30分）を返します。
+ */
+function calculateOptimalDurationMinutes(sortedValidLogs: SleepLog[]): {
+  optimalMinutes: number;
+  isPersonalized: boolean;
+} {
+  const DEFAULT_OPTIMAL_MINUTES = 450; // 7.5時間
+  const MIN_SAMPLES = 3;
+  const MAX_RECENT_SAMPLES = 30;
+
+  const goodSleepLogs = sortedValidLogs
+    .filter((l) => l.mood === 1)
+    .slice(0, MAX_RECENT_SAMPLES);
+
+  if (goodSleepLogs.length < MIN_SAMPLES) {
+    return { optimalMinutes: DEFAULT_OPTIMAL_MINUTES, isPersonalized: false };
+  }
+
+  const totalMinutes = goodSleepLogs.reduce((sum, l) => sum + Math.floor(l.duration / 60), 0);
+  const avgMinutes = totalMinutes / goodSleepLogs.length;
+
+  // 15分刻みに丸め、6時間(360分)〜9時間(540分)の範囲に収める
+  const rounded = Math.round(avgMinutes / 15) * 15;
+  const clamped = Math.min(540, Math.max(360, rounded));
+
+  return { optimalMinutes: clamped, isPersonalized: true };
+}
+
+/**
  * 昨日の睡眠データから、今日の推奨就寝時刻と推奨睡眠時間を分析・算出します。
  */
 export function analyzeNextSleep(logs: SleepLog[]): SleepAnalysisResult {
@@ -131,9 +161,12 @@ export function analyzeNextSleep(logs: SleepLog[]): SleepAnalysisResult {
   }
   const targetWakeTimeStr = `${formatHHMM(wakeH, wakeM)}頃`;
 
+  // 個人の適正睡眠時間（良い目覚めの平均、または標準7.5時間）を算出
+  const { optimalMinutes, isPersonalized } = calculateOptimalDurationMinutes(validLogs);
+  const optimalStr = formatDurationJapanese(optimalMinutes * 60);
+
   // 推奨睡眠時間の算出
-  // 基準値: 450分 (7.5時間)
-  let recDurationMinutes = 450;
+  let recDurationMinutes = optimalMinutes;
   let statusBadge: SleepAnalysisResult['statusBadge'] = {
     label: '良好なリズム',
     type: 'optimal',
@@ -142,12 +175,12 @@ export function analyzeNextSleep(logs: SleepLog[]): SleepAnalysisResult {
   let advice = '';
   const tips: string[] = [];
 
-  const lastHours = lastDurationMinutes / 60;
+  const debtThreshold = Math.max(330, optimalMinutes - 60);
+  const excessThreshold = Math.min(570, optimalMinutes + 60);
 
-  if (lastDurationMinutes < 390) {
-    // 6.5時間未満: 睡眠不足（睡眠負債）
-    // 不足を補うため7時間45分〜8時間15分程度を推奨
-    recDurationMinutes = 480; // 8時間
+  if (lastDurationMinutes < debtThreshold) {
+    // 適正時間より1時間以上短い: 睡眠不足（睡眠負債）
+    recDurationMinutes = Math.min(540, optimalMinutes + 30);
     statusBadge = {
       label: '睡眠負債あり',
       type: 'debt',
@@ -162,9 +195,9 @@ export function analyzeNextSleep(logs: SleepLog[]): SleepAnalysisResult {
 
     tips.push('いつもより30分〜1時間早めに布団に入ると睡眠負債が回復しやすいです');
     tips.push('ぬるめ（38〜40℃）のお風呂にゆっくり浸かると深い睡眠が得られます');
-  } else if (lastDurationMinutes > 510) {
-    // 8.5時間超: 寝過ぎ
-    recDurationMinutes = 435; // 7時間15分
+  } else if (lastDurationMinutes > excessThreshold) {
+    // 適正時間より1時間以上長い: 寝過ぎ
+    recDurationMinutes = Math.max(360, optimalMinutes - 15);
     statusBadge = {
       label: '寝過ぎリセット',
       type: 'excess',
@@ -180,10 +213,10 @@ export function analyzeNextSleep(logs: SleepLog[]): SleepAnalysisResult {
     tips.push('朝起きたらすぐにカーテンを開けて太陽の光を浴びましょう');
     tips.push('就寝前に軽いストレッチをして副交感神経を優位に整えましょう');
   } else {
-    // 6.5時間〜8.5時間: 適正範囲
+    // 適正範囲
     if (lastMood === 1) {
       // 良い目覚め！昨日の睡眠リズムを維持
-      recDurationMinutes = Math.min(480, Math.max(450, Math.round(lastDurationMinutes / 15) * 15));
+      recDurationMinutes = Math.min(540, Math.max(360, Math.round(lastDurationMinutes / 15) * 15));
       statusBadge = {
         label: 'ベストリズム維持',
         type: 'optimal',
@@ -193,7 +226,7 @@ export function analyzeNextSleep(logs: SleepLog[]): SleepAnalysisResult {
       tips.push('今の生活リズムが合っています。規則正しい就寝・起床を続けましょう');
     } else if (lastMood === 0) {
       // 時間は適正だが気分が悪い
-      recDurationMinutes = 465; // 7時間45分
+      recDurationMinutes = Math.min(540, optimalMinutes + 15);
       statusBadge = {
         label: '質・リズム調整',
         type: 'debt',
@@ -204,13 +237,14 @@ export function analyzeNextSleep(logs: SleepLog[]): SleepAnalysisResult {
       tips.push('寝室の温度（20℃前後）や湿度を快適に保ちましょう');
     } else {
       // 気分未設定
-      recDurationMinutes = 450; // 7.5時間
+      recDurationMinutes = optimalMinutes;
       statusBadge = {
         label: '良好なバランス',
         type: 'optimal',
       };
       headline = '今夜も安定した睡眠リズムを意識しましょう';
-      advice = `昨日は${lastDurationStr}のバランスの良い睡眠でした。今夜も標準的な${formatDurationJapanese(recDurationMinutes * 60)}を目標に、無理のない時間帯に就寝しましょう。`;
+      const baseLabel = isPersonalized ? `あなたの良い睡眠の平均（${optimalStr}）` : `標準的な${optimalStr}`;
+      advice = `昨日は${lastDurationStr}のバランスの良い睡眠でした。今夜も${baseLabel}を目標に、無理のない時間帯に就寝しましょう。`;
       tips.push('起床時に「寝起き評価（良い・悪い）」を記録すると、より正確な分析ができます');
     }
   }

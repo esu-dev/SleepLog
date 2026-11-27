@@ -6,5 +6,5 @@ import Constants from 'expo-constants';
  * with fallback to package version or default.
  */
 export const APP_VERSION =
-  Constants.expoConfig?.version ?? '1.3.5';
+  Constants.expoConfig?.version ?? '1.3.6';
 
